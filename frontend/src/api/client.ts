@@ -5,7 +5,7 @@ import type {
   GraphNode,
 } from "../types";
 
-const BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
+export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -20,7 +20,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export const apiClient = {
   postQuery(req: QueryRequest): Promise<QueryResponse> {
-    return request<QueryResponse>(`${BASE}/query`, {
+    return request<QueryResponse>(`${API_BASE}/query`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
@@ -29,7 +29,7 @@ export const apiClient = {
 
   getSignedUrl(docId: string, page: number): Promise<SignedUrlResponse> {
     return request<SignedUrlResponse>(
-      `${BASE}/document/signed_url?doc_id=${encodeURIComponent(docId)}&page=${page}`,
+      `${API_BASE}/document/signed_url?doc_id=${encodeURIComponent(docId)}&page=${page}`,
       { method: "GET" }
     );
   },
@@ -43,13 +43,13 @@ export const apiClient = {
     if (categories?.length) {
       categories.forEach((c) => params.append("categories", c));
     }
-    return request<GraphNode[]>(`${BASE}/graph/search?${params}`, {
+    return request<GraphNode[]>(`${API_BASE}/graph/search?${params}`, {
       method: "GET",
     });
   },
 
   listDocuments(): Promise<{ documents: string[] }> {
-    return request<{ documents: string[] }>(`${BASE}/admin/documents`, {
+    return request<{ documents: string[] }>(`${API_BASE}/admin/documents`, {
       method: "GET",
     });
   },
@@ -61,7 +61,7 @@ export const apiClient = {
     flagged_pages: { page: number; confidence: number }[];
     flagged_count: number;
   }> {
-    return request(`${BASE}/admin/documents/${encodeURIComponent(docId)}/ocr`, {
+    return request(`${API_BASE}/admin/documents/${encodeURIComponent(docId)}/ocr`, {
       method: "GET",
     });
   },

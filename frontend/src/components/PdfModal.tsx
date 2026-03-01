@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { useAppStore } from "../stores/useAppStore";
-import { apiClient } from "../api/client";
+import { apiClient, API_BASE } from "../api/client";
 
 // Configure pdf.js worker from local node_modules (CDN doesn't have this version)
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
@@ -36,7 +36,10 @@ export default function PdfModal() {
           pdfModalProps.docId,
           pdfModalProps.page
         );
-        const doc = await pdfjsLib.getDocument(url).promise;
+        // Proxy URLs are relative (e.g. "/document/proxy/...") and need
+        // the API base prefix so Vite's dev proxy forwards them to the backend.
+        const pdfUrl = url.startsWith("/document/") ? `${API_BASE}${url}` : url;
+        const doc = await pdfjsLib.getDocument(pdfUrl).promise;
         if (cancelled) return;
         setPdfDoc(doc);
         setTotalPages(doc.numPages);
