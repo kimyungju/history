@@ -34,6 +34,10 @@ export interface GraphNode {
   sub_category: string | null;
   attributes: Record<string, unknown>;
   highlighted: boolean;
+  evidence_doc_id: string | null;
+  evidence_page: number | null;
+  evidence_text_span: string | null;
+  evidence_confidence: number | null;
 }
 
 export interface GraphEdge {
@@ -49,6 +53,21 @@ export interface GraphPayload {
   nodes: GraphNode[];
   edges: GraphEdge[];
   center_node: string;
+}
+
+export interface OverviewNode {
+  canonical_id: string;
+  name: string;
+  main_categories: string[];
+  sub_category: string | null;
+  connection_count: number;
+  evidence_doc_id: string | null;
+  evidence_page: number | null;
+}
+
+export interface GraphOverviewPayload {
+  nodes: OverviewNode[];
+  edges: GraphEdge[];
 }
 
 // --- Response types ---

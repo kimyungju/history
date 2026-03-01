@@ -13,7 +13,14 @@ import logging
 from neo4j import AsyncGraphDatabase
 
 from app.config.settings import settings
-from app.models.schemas import Evidence, GraphEdge, GraphNode, GraphPayload
+from app.models.schemas import (
+    Evidence,
+    GraphEdge,
+    GraphNode,
+    GraphOverviewPayload,
+    GraphPayload,
+    OverviewNode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -379,6 +386,73 @@ class Neo4jService:
 
         return [rec["canonical_id"] for rec in records]
 
+    async def get_overview_graph(self) -> GraphOverviewPayload:
+        """Return all entities and relationships for the overview visualization.
+
+        Each node includes a connection_count (number of relationships) so the
+        frontend can size nodes proportionally.
+        """
+        nodes: list[OverviewNode] = []
+        edges: list[GraphEdge] = []
+
+        async with self.driver.session() as session:
+            # Fetch all entities with their connection counts
+            node_result = await session.run(
+                """
+                MATCH (e:Entity)
+                OPTIONAL MATCH (e)-[r:RELATED_TO]-()
+                WITH e, count(r) AS connection_count
+                RETURN e.canonical_id AS canonical_id,
+                       e.name AS name,
+                       coalesce(e.main_categories, []) AS main_categories,
+                       e.sub_category AS sub_category,
+                       connection_count,
+                       e.evidence_doc_id AS evidence_doc_id,
+                       e.evidence_page AS evidence_page
+                ORDER BY connection_count DESC
+                """
+            )
+            async for record in node_result:
+                nodes.append(
+                    OverviewNode(
+                        canonical_id=record["canonical_id"],
+                        name=record["name"],
+                        main_categories=list(record["main_categories"]),
+                        sub_category=record.get("sub_category"),
+                        connection_count=record["connection_count"],
+                        evidence_doc_id=record.get("evidence_doc_id"),
+                        evidence_page=record.get("evidence_page"),
+                    )
+                )
+
+            # Fetch all relationships
+            edge_result = await session.run(
+                """
+                MATCH (a:Entity)-[r:RELATED_TO]->(b:Entity)
+                RETURN a.canonical_id AS source_id,
+                       b.canonical_id AS target_id,
+                       r.rel_type AS rel_type
+                """
+            )
+            edge_idx = 0
+            async for record in edge_result:
+                edges.append(
+                    GraphEdge(
+                        id=f"overview_edge_{edge_idx}",
+                        source=record["source_id"],
+                        target=record["target_id"],
+                        type=record["rel_type"] or "RELATED_TO",
+                        attributes={},
+                        highlighted=False,
+                    )
+                )
+                edge_idx += 1
+
+        logger.info(
+            "Overview graph: %d nodes, %d edges", len(nodes), len(edges)
+        )
+        return GraphOverviewPayload(nodes=nodes, edges=edges)
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -404,6 +478,10 @@ class Neo4jService:
             sub_category=node_record.get("sub_category"),
             attributes=attrs,
             highlighted=highlighted,
+            evidence_doc_id=node_record.get("evidence_doc_id"),
+            evidence_page=node_record.get("evidence_page"),
+            evidence_text_span=node_record.get("evidence_text_span"),
+            evidence_confidence=node_record.get("evidence_confidence"),
         )
 
 

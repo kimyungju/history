@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ChatMessage, GraphPayload, GraphNode } from "../types";
+import type { ChatMessage, GraphPayload, GraphNode, GraphOverviewPayload } from "../types";
 import { apiClient } from "../api/client";
 
 interface AppState {
@@ -13,6 +13,9 @@ interface AppState {
   // Graph
   graphData: GraphPayload | null;
   selectedNode: GraphNode | null;
+  overviewData: GraphOverviewPayload | null;
+  isOverviewMode: boolean;
+  hiddenCategories: Set<string>;
 
   // UI
   splitRatio: number;
@@ -31,6 +34,9 @@ interface AppState {
   setFilterCategories: (cats: string[]) => void;
   setChatInput: (text: string) => void;
   setGraphData: (data: GraphPayload | null) => void;
+  setOverviewData: (data: GraphOverviewPayload | null) => void;
+  setOverviewMode: (mode: boolean) => void;
+  toggleCategory: (category: string) => void;
   setMobileTab: (tab: "graph" | "chat") => void;
   toggleAdmin: () => void;
 }
@@ -44,6 +50,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   chatInput: "",
   graphData: null,
   selectedNode: null,
+  overviewData: null,
+  isOverviewMode: true,
+  hiddenCategories: new Set<string>(),
   splitRatio: 0.65,
   isSidebarOpen: false,
   isPdfModalOpen: false,
@@ -80,6 +89,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         messages: [...get().messages, assistantMsg],
         graphData: response.graph ?? null,
+        isOverviewMode: false,
         isQuerying: false,
       });
     } catch (err) {
@@ -125,6 +135,26 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setGraphData(data: GraphPayload | null) {
     set({ graphData: data });
+  },
+
+  setOverviewData(data: GraphOverviewPayload | null) {
+    set({ overviewData: data });
+  },
+
+  setOverviewMode(mode: boolean) {
+    set({ isOverviewMode: mode });
+  },
+
+  toggleCategory(category: string) {
+    set((state) => {
+      const next = new Set(state.hiddenCategories);
+      if (next.has(category)) {
+        next.delete(category);
+      } else {
+        next.add(category);
+      }
+      return { hiddenCategories: next };
+    });
   },
 
   setMobileTab(tab: "graph" | "chat") {

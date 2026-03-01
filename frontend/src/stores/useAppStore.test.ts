@@ -10,6 +10,9 @@ beforeEach(() => {
     filterCategories: [],
     graphData: null,
     selectedNode: null,
+    overviewData: null,
+    isOverviewMode: true,
+    hiddenCategories: new Set<string>(),
     splitRatio: 0.65,
     isSidebarOpen: false,
     isPdfModalOpen: false,
@@ -89,5 +92,21 @@ describe("useAppStore", () => {
   it("setChatInput updates input text", () => {
     useAppStore.getState().setChatInput("Tell me about Raffles");
     expect(useAppStore.getState().chatInput).toBe("Tell me about Raffles");
+  });
+
+  it("toggleCategory adds and removes categories", () => {
+    const { toggleCategory } = useAppStore.getState();
+    toggleCategory("Defence and Military");
+    expect(useAppStore.getState().hiddenCategories.has("Defence and Military")).toBe(true);
+    toggleCategory("Defence and Military");
+    expect(useAppStore.getState().hiddenCategories.has("Defence and Military")).toBe(false);
+  });
+
+  it("setOverviewMode switches between overview and query mode", () => {
+    const { setOverviewMode } = useAppStore.getState();
+    setOverviewMode(true);
+    expect(useAppStore.getState().isOverviewMode).toBe(true);
+    setOverviewMode(false);
+    expect(useAppStore.getState().isOverviewMode).toBe(false);
   });
 });

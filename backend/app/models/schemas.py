@@ -65,6 +65,10 @@ class GraphNode(BaseModel):
     sub_category: str | None = None
     attributes: dict = {}
     highlighted: bool = False
+    evidence_doc_id: str | None = None
+    evidence_page: int | None = None
+    evidence_text_span: str | None = None
+    evidence_confidence: float | None = None
 
 
 class GraphEdge(BaseModel):
@@ -80,6 +84,25 @@ class GraphPayload(BaseModel):
     nodes: list[GraphNode]
     edges: list[GraphEdge]
     center_node: str
+
+
+class OverviewNode(BaseModel):
+    """Node with connection count for overview visualization."""
+
+    canonical_id: str
+    name: str
+    main_categories: list[str]
+    sub_category: str | None = None
+    connection_count: int = 0
+    evidence_doc_id: str | None = None
+    evidence_page: int | None = None
+
+
+class GraphOverviewPayload(BaseModel):
+    """Full graph overview with connection counts for node sizing."""
+
+    nodes: list[OverviewNode]
+    edges: list[GraphEdge]
 
 
 # --- Response Models ---
