@@ -1,0 +1,28 @@
+{
+  "displayName": "Colonial Archives — High Error Rate",
+  "documentation": {
+    "content": "Error rate exceeded 5 errors/min for the colonial-archives-backend Cloud Run service. Check Cloud Logging for stack traces.",
+    "mimeType": "text/markdown"
+  },
+  "conditions": [
+    {
+      "displayName": "Error log entries > 5/min",
+      "conditionThreshold": {
+        "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"colonial-archives-backend\" AND severity>=ERROR",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 5,
+        "duration": "60s",
+        "aggregations": [
+          {
+            "alignmentPeriod": "60s",
+            "perSeriesAligner": "ALIGN_RATE"
+          }
+        ]
+      }
+    }
+  ],
+  "alertStrategy": {
+    "autoClose": "604800s"
+  },
+  "_apply_command": "gcloud alpha monitoring policies create --policy-from-file=infra/logging/alert-policy.json --project=aihistory-488807"
+}
