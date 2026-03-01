@@ -19,12 +19,14 @@ from app.models.schemas import (
     GraphNode,
     GraphPayload,
     QueryResponse,
+    WebCitation,
 )
 from app.services.embeddings import embeddings_service
 from app.services.llm import llm_service
 from app.services.neo4j_service import neo4j_service
 from app.services.storage import storage_service
 from app.services.vector_search import vector_search_service
+from app.services.web_search import web_search_service
 
 logger = logging.getLogger(__name__)
 
@@ -122,15 +124,28 @@ class HybridRetrievalService:
             relevance_score,
         )
 
-        # Web fallback placeholder (Phase 4)
+        # Phase 4: Web fallback when relevance is below threshold.
+        web_context: list[dict] = []
+        source_type = "archive"
+
         if relevance_score < settings.RELEVANCE_THRESHOLD:
-            logger.warning(
-                "Relevance %.4f below threshold %.2f — web fallback not yet implemented",
+            logger.info(
+                "Relevance %.4f below threshold %.2f — triggering web fallback",
                 relevance_score,
                 settings.RELEVANCE_THRESHOLD,
             )
+            try:
+                web_context = await web_search_service.search(question)
+                if web_context:
+                    merged_context.extend(web_context)
+                    source_type = "mixed" if merged_context else "web_fallback"
+                    logger.info("Added %d web results to context", len(web_context))
+            except Exception:
+                logger.exception("Web fallback failed; continuing with archive only")
 
-        source_type = "archive"
+        # If we only had web results (no archive at all), mark as web_fallback.
+        if not vector_results and not graph_context and web_context:
+            source_type = "web_fallback"
 
         # Step 7 — Generate answer via LLM.
         llm_result: dict = await llm_service.generate_answer(
@@ -138,22 +153,36 @@ class HybridRetrievalService:
         )
         answer_text: str = llm_result["answer"]
 
-        # Step 8 — Build ArchiveCitation list.
-        citations: list[ArchiveCitation] = []
-        for idx, chunk in enumerate(merged_context, start=1):
-            text_span = chunk.get("text", "")
-            if len(text_span) > 300:
-                text_span = text_span[:300]
+        # Step 8 — Build citation list (archive + web).
+        citations: list[ArchiveCitation | WebCitation] = []
+        archive_idx = 0
+        web_idx = 0
 
-            citations.append(
-                ArchiveCitation(
-                    id=idx,
-                    doc_id=chunk.get("doc_id", ""),
-                    pages=chunk.get("pages", []),
-                    text_span=text_span,
-                    confidence=chunk.get("confidence", 0.0),
+        for chunk in merged_context:
+            cite_type = chunk.get("cite_type", "archive")
+            if cite_type == "web":
+                web_idx += 1
+                citations.append(
+                    WebCitation(
+                        id=web_idx,
+                        title=chunk.get("title", ""),
+                        url=chunk.get("url", ""),
+                    )
                 )
-            )
+            else:
+                archive_idx += 1
+                text_span = chunk.get("text", "")
+                if len(text_span) > 300:
+                    text_span = text_span[:300]
+                citations.append(
+                    ArchiveCitation(
+                        id=archive_idx,
+                        doc_id=chunk.get("doc_id", ""),
+                        pages=chunk.get("pages", []),
+                        text_span=text_span,
+                        confidence=chunk.get("confidence", 0.0),
+                    )
+                )
 
         # Step 9 — Build graph payload.
         graph_payload = graph_result.get("payload")

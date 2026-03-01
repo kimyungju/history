@@ -135,12 +135,36 @@ async def _run_ingestion(job_id: str, pdf_url: str, doc_id: str) -> None:
         )
 
         if not categories:
-            logger.warning(
-                "[%s] No categories found for pdf_filename=%s or doc_id=%s",
+            # Phase 4: Auto-classify using first-page OCR text.
+            logger.info(
+                "[%s] No manual categories for %s — running auto-classification",
                 job_id,
                 pdf_filename,
-                doc_id,
             )
+            first_page_text = ocr_result.pages[0].text if ocr_result.pages else ""
+            if first_page_text:
+                category, confidence = await auto_classification_service.classify(
+                    first_page_text
+                )
+                if confidence >= settings.CLASSIFICATION_CONFIDENCE_MIN:
+                    categories = [category]
+                    logger.info(
+                        "[%s] Auto-classified as '%s' (confidence=%.2f)",
+                        job_id,
+                        category,
+                        confidence,
+                    )
+                else:
+                    categories = [category]
+                    logger.warning(
+                        "[%s] Auto-classified as '%s' with LOW confidence %.2f (threshold=%.2f) — flagged for review",
+                        job_id,
+                        category,
+                        confidence,
+                        settings.CLASSIFICATION_CONFIDENCE_MIN,
+                    )
+            else:
+                logger.warning("[%s] No OCR text for auto-classification", job_id)
 
         # ---- Step 4: Chunk ---------------------------------------------------
         logger.info("[%s] Chunking %d pages with categories=%s", job_id, len(ocr_result.pages), categories)

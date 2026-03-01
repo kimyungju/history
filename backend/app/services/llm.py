@@ -67,17 +67,23 @@ class LlmService:
         Returns a dict with ``answer`` (str) and ``context_chunks`` (the input
         list passed through for downstream traceability).
         """
-        cite_type = "archive" if source_type == "archive" else "web"
-
         # Build the context block and citation reference list.
+        # Use per-chunk cite_type for mixed source support (Phase 4).
         context_parts: list[str] = []
         citation_refs: list[str] = []
+        archive_idx = 0
+        web_idx = 0
 
-        for idx, chunk in enumerate(context_chunks, start=1):
-            cite_id = chunk.get("id", idx)
-            prefix = f"[{cite_type}:{cite_id}]"
+        for chunk in context_chunks:
+            cite_type = chunk.get("cite_type", "archive")
+            if cite_type == "web":
+                web_idx += 1
+                prefix = f"[web:{web_idx}]"
+            else:
+                archive_idx += 1
+                prefix = f"[archive:{archive_idx}]"
             context_parts.append(f"{prefix} {chunk.get('text', '')}")
-            citation_refs.append(f"{prefix} chunk {cite_id}")
+            citation_refs.append(prefix)
 
         context_str = "\n\n".join(context_parts)
         citations_str = "; ".join(citation_refs)
