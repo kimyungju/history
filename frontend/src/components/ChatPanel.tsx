@@ -35,7 +35,7 @@ export default function ChatPanel() {
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center max-w-xs animate-fade-in">
-              <span className="text-ink-500/60 text-3xl select-none">&#9670;</span>
+              <img src="/logo.png" alt="Research Assistant" className="w-16 h-16 rounded-full mx-auto" />
               <h2 className="font-display text-xl font-semibold text-stone-300 mt-3">
                 Research Assistant
               </h2>
@@ -52,7 +52,8 @@ export default function ChatPanel() {
           <ChatMessage key={i} message={msg} />
         ))}
         {isQuerying && (
-          <div className="flex justify-start mb-3 animate-fade-in">
+          <div className="flex justify-start mb-3 animate-fade-in gap-2 items-start">
+            <img src="/logo.png" alt="" className="w-6 h-6 rounded-full mt-1 shrink-0" />
             <div className="bg-stone-800/80 rounded-2xl px-4 py-3">
               <div className="flex gap-1.5">
                 <span className="w-1.5 h-1.5 bg-ink-500 rounded-full animate-subtle-pulse" />

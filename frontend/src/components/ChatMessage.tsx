@@ -104,7 +104,8 @@ export default function ChatMessage({ message }: Props) {
   );
 
   return (
-    <div className="flex justify-start mb-3 animate-fade-in">
+    <div className="flex justify-start mb-3 animate-fade-in gap-2 items-start">
+      <img src="/logo.png" alt="" className="w-6 h-6 rounded-full mt-1 shrink-0" />
       <div className="bg-stone-800/80 rounded-2xl rounded-bl-sm px-4 py-2 max-w-[85%]">
         <div className="text-sm prose prose-invert prose-sm max-w-none prose-p:text-stone-200 prose-strong:text-stone-100 prose-p:leading-relaxed">
           <Markdown rehypePlugins={[rehypeRaw]} components={markdownComponents}>

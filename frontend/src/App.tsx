@@ -15,7 +15,7 @@ function AppHeader() {
   return (
     <div className="h-10 flex items-center justify-between px-4 border-b border-stone-800/60 bg-stone-950 shrink-0">
       <div className="flex items-center gap-2.5">
-        <span className="text-ink-500 text-lg leading-none select-none">&#9670;</span>
+        <img src="/logo.png" alt="Colonial Archives" className="w-7 h-7 rounded-full" />
         <h1 className="font-display text-[15px] font-semibold text-stone-200 tracking-wide">
           Colonial Archives
         </h1>
