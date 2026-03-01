@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Colonial Archives Graph-RAG: an AI-powered research tool for querying colonial-era handwritten archive documents (English + Chinese) via a chatbot backed by a knowledge graph. Every answer must trace back to specific document pages — zero tolerance for hallucination.
 
-**Current state**: Phases 1–4 code complete, Phase 5 mostly complete (5.1–5.3, 5.5–5.7 done). Backend **tested end-to-end with real data** — full 9-step ingestion pipeline works (OCR → chunk → embed → vector upsert → entity extraction → normalization → Neo4j MERGE). Query endpoint works with **archive-first approach**: parallel vector search + graph traversal → LLM generates from archive context only → web fallback with disclaimer only when archive can't answer. Frontend code complete with mobile responsive layout and refined archival design theme (Crimson Pro + Plus Jakarta Sans + IBM Plex Mono typography, warm stone/ink palette, animations). 63 tests (34 backend + 29 frontend). Only remaining: T11 GCP infra provisioning, 3.8 integration testing, 5.4 batch ingestion (deferred).
+**Current state**: Phases 1–4 code complete, Phase 5 mostly complete (5.1–5.3, 5.5–5.7 done). Backend **tested end-to-end with real data** — full 9-step ingestion pipeline works (OCR → chunk → embed → vector upsert → entity extraction → normalization → Neo4j MERGE). Query endpoint works with **archive-first approach**: parallel vector search + graph traversal → LLM generates from archive context only → web fallback with disclaimer only when archive can't answer. Frontend features: mobile responsive layout, warm archival design theme (Crimson Pro + Plus Jakarta Sans + IBM Plex Mono typography, warm stone/ink palette), **two-state knowledge graph** (fcose-clustered overview on load → filtered query view with "Show Full Graph" reset), category legend with toggle, node sizing by connection count. 87 tests (54 backend + 33 frontend). Cloud Run deployment in progress (cloudbuild.yaml ready, Artifact Registry + Secret Manager + IAM configured, deploy step needs env vars).
 
 ## Commands
 
@@ -25,11 +25,11 @@ cd infra && docker-compose up --build
 
 # Backend tests (use Python 3.13, not 3.14 which lacks vertexai)
 cd backend && "C:/Users/yjkim/AppData/Local/Programs/Python/Python313/python.exe" -m pytest tests/ -v
-# 34 tests: 6 formatter + 3 trace + 2 log_stage + 1 health + 10 hybrid_retrieval + 2 admin + 3 web_search + 4 phase4 + 3 vector_config
+# 54 tests: 6 formatter + 3 trace + 2 log_stage + 1 health + 10 hybrid_retrieval + 2 admin + 3 web_search + 4 phase4 + 3 vector_config + 10 full_text + 6 page_text + 2 graph_overview
 
 # Frontend tests
 cd frontend && npx vitest run
-# 29 tests across 5 test files
+# 33 tests across 5 test files
 
 # Lint
 cd backend && ruff check app/
@@ -60,7 +60,7 @@ gcloud config set project aihistory-488807
   - `llm.py` — Gemini 2.0 Flash with archive-focused prompt + separate `WEB_FALLBACK_PROMPT`; `generate_answer()` accepts optional `prompt_template` parameter; temperature 0.1
   - `entity_extraction.py` — Gemini structured JSON output for entities + relationships per chunk
   - `entity_normalization.py` — Three-stage dedup (exact match, embedding similarity, fuzzy string via rapidfuzz)
-  - `neo4j_service.py` — Async Neo4j driver, MERGE entities/relationships, subgraph traversal, entity search
+  - `neo4j_service.py` — Async Neo4j driver (lazy-init), MERGE entities/relationships, subgraph traversal, entity search (with word-split fallback), `get_overview_graph()` for full graph with connection counts
   - `hybrid_retrieval.py` — Orchestrates archive-first query: parallel vector search + graph traversal → LLM with archive-only context → web fallback with disclaimer if archive can't answer. Scoring uses `1 - cosine_distance` for similarity.
   - `web_search.py` — Tavily web search fallback, only triggered when archive LLM returns fallback answer
   - `auto_classification.py` — Gemini-based document category classification for unmapped PDFs
@@ -92,6 +92,7 @@ gcloud config set project aihistory-488807
 - `docs/plans/2026-03-01-frontend-design-refinement.md` — Frontend design refinement plan
 - `docs/plans/2026-03-01-query-pipeline-fix.md` — Vector search config + entity hints fix
 - `docs/plans/2026-03-01-archive-first-query.md` — Archive-first query with web fallback disclaimer
+- `docs/plans/2026-03-02-graph-visualization-overhaul.md` — Two-state graph (overview + query filtered)
 
 ## API Endpoints
 
@@ -101,6 +102,7 @@ gcloud config set project aihistory-488807
 | GET | `/ingest_status/{job_id}` | Phase 1 ✓ |
 | POST | `/query` | Phase 2+4 ✓ (parallel vector+graph + web fallback) |
 | GET | `/document/signed_url` | Phase 1 ✓ |
+| GET | `/graph/overview` | ✓ (full graph with connection counts, 5-min cache) |
 | GET | `/graph/search?q=&limit=&categories=` | Phase 2 ✓ |
 | GET | `/graph/{canonical_id}?categories=` | Phase 2 ✓ |
 | GET | `/admin/documents` | Phase 5.3 ✓ (list ingested doc IDs) |
