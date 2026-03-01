@@ -9,6 +9,7 @@ vertexai==1.71.1
 python-multipart==0.0.20
 httpx==0.28.1
 neo4j==5.27.0
+pypdf==6.7.4
 rapidfuzz==3.10.1
 tavily-python==0.5.0
 pytest==8.3.4

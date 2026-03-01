@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import logging
 import re
 from dataclasses import dataclass
 
 from google.cloud import documentai_v1 as documentai
+from pypdf import PdfReader, PdfWriter
 
 from app.config.settings import settings
 
+logger = logging.getLogger(__name__)
+
 DOCUMENT_AI_MAX_PAGES_PER_REQUEST = 15
+# Document AI synchronous API rejects inline documents > 40 MB.
+DOCUMENT_AI_MAX_INLINE_BYTES = 40 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -61,12 +68,24 @@ class OcrService:
         """OCR a full PDF document.
 
         Document AI's synchronous endpoint accepts at most 15 pages per
-        request.  For longer documents the PDF is processed in batches of
-        15 pages with concurrency limited by a semaphore.
-        """
-        total_pages = self._count_pages(pdf_bytes)
+        request and rejects inline documents larger than 40 MB.
 
-        if total_pages <= DOCUMENT_AI_MAX_PAGES_PER_REQUEST:
+        For large PDFs (> 40 MB) we physically split the PDF into sub-PDFs
+        of up to 15 pages each using pypdf before sending to Document AI.
+        For smaller multi-page PDFs we use ``IndividualPageSelector``.
+        """
+        is_oversized = len(pdf_bytes) > DOCUMENT_AI_MAX_INLINE_BYTES
+        total_pages = self._count_pages_pypdf(pdf_bytes)
+
+        if is_oversized:
+            logger.info(
+                "[%s] PDF is %.1f MB (> 40 MB limit) with %d pages — splitting into sub-PDFs",
+                doc_id,
+                len(pdf_bytes) / 1024 / 1024,
+                total_pages,
+            )
+
+        if total_pages <= DOCUMENT_AI_MAX_PAGES_PER_REQUEST and not is_oversized:
             # Small document -- single request, no page selector needed.
             result = await self._process_batch(pdf_bytes, doc_id, page_start=1)
             pages = sorted(result["pages"], key=lambda p: p.page_number)
@@ -77,6 +96,7 @@ class OcrService:
             )
 
         # Large document -- split into batches of 15 pages.
+        reader = PdfReader(io.BytesIO(pdf_bytes)) if is_oversized else None
         semaphore = asyncio.Semaphore(5)
 
         async def _limited(coro):
@@ -89,11 +109,21 @@ class OcrService:
                 batch_start + DOCUMENT_AI_MAX_PAGES_PER_REQUEST - 1,
                 total_pages,
             )
-            tasks.append(
-                _limited(
-                    self._process_page_range(pdf_bytes, doc_id, batch_start, batch_end)
+
+            if is_oversized:
+                # Split out just the needed pages into a smaller sub-PDF.
+                sub_pdf_bytes = self._extract_page_range(reader, batch_start, batch_end)
+                tasks.append(
+                    _limited(
+                        self._process_batch(sub_pdf_bytes, doc_id, page_start=batch_start)
+                    )
                 )
-            )
+            else:
+                tasks.append(
+                    _limited(
+                        self._process_page_range(pdf_bytes, doc_id, batch_start, batch_end)
+                    )
+                )
 
         batch_results: list[dict] = await asyncio.gather(*tasks)
 
@@ -217,6 +247,26 @@ class OcrService:
         return {"pages": pages, "raw_responses": [raw_resp]}
 
     # -- helpers ------------------------------------------------------------
+
+    @staticmethod
+    def _extract_page_range(reader: PdfReader, page_start: int, page_end: int) -> bytes:
+        """Extract pages [page_start, page_end] (1-indexed, inclusive) into a new PDF.
+
+        Uses pypdf to create a sub-PDF containing only the requested pages,
+        which keeps the byte size well under Document AI's 40 MB limit.
+        """
+        writer = PdfWriter()
+        for i in range(page_start - 1, page_end):  # Convert to 0-indexed
+            writer.add_page(reader.pages[i])
+        buf = io.BytesIO()
+        writer.write(buf)
+        return buf.getvalue()
+
+    @staticmethod
+    def _count_pages_pypdf(pdf_bytes: bytes) -> int:
+        """Count pages in a PDF using pypdf (accurate, unlike regex heuristic)."""
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        return len(reader.pages)
 
     @staticmethod
     def _extract_page_text(full_text: str, page) -> str:

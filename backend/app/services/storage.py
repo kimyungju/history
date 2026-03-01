@@ -39,11 +39,18 @@ class StorageService:
     # Public API
     # ------------------------------------------------------------------
 
-    def read_pdf_bytes(self, gcs_url: str) -> bytes:
-        """Download the raw bytes of a PDF stored at *gcs_url* (``gs://...``)."""
+    def read_pdf_bytes(self, gcs_url: str, timeout: int = 300) -> bytes:
+        """Download the raw bytes of a PDF stored at *gcs_url* (``gs://...``).
+
+        Parameters
+        ----------
+        timeout:
+            Download timeout in seconds.  Default 300s (5 min) to handle
+            large files (50-130 MB) over slower connections.
+        """
         blob_name = self._parse_blob_name(gcs_url)
         blob = self._bucket.blob(blob_name)
-        return blob.download_as_bytes()
+        return blob.download_as_bytes(timeout=timeout)
 
     def upload_json(self, path: str, data: dict | list) -> str:
         """Serialize *data* as JSON and upload it to *path* inside the bucket.
