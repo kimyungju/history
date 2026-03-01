@@ -4,6 +4,7 @@ import type {
   SignedUrlResponse,
   PageTextResponse,
   GraphNode,
+  GraphOverviewPayload,
 } from "../types";
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
@@ -60,6 +61,25 @@ export const apiClient = {
       `${API_BASE}/document/${encodeURIComponent(docId)}/pages/${page}/text`,
       { method: "GET" }
     );
+  },
+
+  getOverview(): Promise<GraphOverviewPayload> {
+    return request<GraphOverviewPayload>(`${API_BASE}/graph/overview`, {
+      method: "GET",
+    });
+  },
+
+  getDocumentText(
+    docId: string,
+    pageStart?: number,
+    pageEnd?: number,
+  ): Promise<{ doc_id: string; total_pages: number; pages: Array<{ page_number: number; text: string; confidence: number }> }> {
+    const params = new URLSearchParams();
+    if (pageStart !== undefined) params.set("page_start", String(pageStart));
+    if (pageEnd !== undefined) params.set("page_end", String(pageEnd));
+    const qs = params.toString();
+    const url = `${API_BASE}/document/${encodeURIComponent(docId)}/text${qs ? `?${qs}` : ""}`;
+    return request(url);
   },
 
   getOcrQuality(docId: string): Promise<{
