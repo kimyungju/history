@@ -43,6 +43,7 @@ export default function GraphCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
   const [overviewError, setOverviewError] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
   const [forceRender, setForceRender] = useState(0);
 
   // Store state
@@ -54,11 +55,12 @@ export default function GraphCanvas() {
   const setOverviewData = useAppStore((s) => s.setOverviewData);
   const setOverviewMode = useAppStore((s) => s.setOverviewMode);
 
-  // ---- Fetch overview on mount with retry logic ----
+  // ---- Fetch overview on mount (with retry for Neo4j cold-start) ----
   useEffect(() => {
     let cancelled = false;
     let retries = 0;
-    const maxRetries = 2;
+    const maxRetries = 5;
+    const retryDelayMs = 3000;
 
     const fetchOverview = () => {
       apiClient
@@ -67,16 +69,19 @@ export default function GraphCanvas() {
           if (!cancelled) {
             setOverviewData(data);
             setOverviewError(false);
+            setRetryCount(0);
           }
         })
         .catch((err) => {
           if (cancelled) return;
-          console.warn(`[GraphCanvas] Overview fetch failed (attempt ${retries + 1}):`, err);
+          console.warn(`[GraphCanvas] Overview fetch failed (attempt ${retries + 1}/${maxRetries + 1}):`, err);
           if (retries < maxRetries) {
             retries++;
-            setTimeout(fetchOverview, 1500);
+            if (!cancelled) setRetryCount(retries);
+            setTimeout(fetchOverview, retryDelayMs);
           } else {
             setOverviewError(true);
+            setRetryCount(0);
           }
         });
     };
@@ -375,7 +380,11 @@ export default function GraphCanvas() {
             <div className="absolute inset-[2.25rem] rounded-full bg-ink-500/20" />
           </div>
           <p className="text-sm text-stone-400 font-display">Loading knowledge graph&hellip;</p>
-          <p className="text-xs text-stone-600 mt-1">Connecting to archive database</p>
+          <p className="text-xs text-stone-600 mt-1">
+            {retryCount > 0
+              ? `Waking up database\u2026 attempt ${retryCount + 1} of 6`
+              : "Connecting to archive database"}
+          </p>
         </div>
       </div>
     );
@@ -392,7 +401,28 @@ export default function GraphCanvas() {
           <button
             onClick={() => {
               setOverviewError(false);
-              apiClient.getOverview().then(setOverviewData).catch(() => setOverviewError(true));
+              setRetryCount(0);
+              let retries = 0;
+              const maxRetries = 5;
+              const attempt = () => {
+                apiClient
+                  .getOverview()
+                  .then((data) => {
+                    setOverviewData(data);
+                    setRetryCount(0);
+                  })
+                  .catch(() => {
+                    if (retries < maxRetries) {
+                      retries++;
+                      setRetryCount(retries);
+                      setTimeout(attempt, 3000);
+                    } else {
+                      setOverviewError(true);
+                      setRetryCount(0);
+                    }
+                  });
+              };
+              attempt();
             }}
             className="px-4 py-2 text-sm rounded-md bg-stone-800 border border-stone-700 text-stone-300 hover:bg-stone-700 hover:text-stone-100 transition-colors"
           >
