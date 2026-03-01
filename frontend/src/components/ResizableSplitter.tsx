@@ -33,7 +33,7 @@ export default function ResizableSplitter() {
   );
 
   const onTouchStart = useCallback(
-    (_e: React.TouchEvent) => {
+    () => {
       isDragging.current = true;
 
       const onTouchMove = (moveEvent: TouchEvent) => {
@@ -57,7 +57,7 @@ export default function ResizableSplitter() {
 
   return (
     <div
-      className="bg-gray-700 cursor-col-resize hover:bg-blue-500 active:bg-blue-400 transition-colors"
+      className="bg-stone-700 cursor-col-resize hover:bg-ink-500 active:bg-ink-400 transition-colors"
       onMouseDown={onMouseDown}
       onTouchStart={onTouchStart}
       role="separator"

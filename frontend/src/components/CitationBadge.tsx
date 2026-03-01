@@ -11,7 +11,7 @@ export default function CitationBadge({ citation }: Props) {
   if (citation.type === "archive") {
     return (
       <button
-        className="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded text-xs font-medium bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition-colors cursor-pointer"
+        className="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded text-xs font-medium bg-ink-500/20 text-ink-400 hover:bg-ink-500/30 transition-colors cursor-pointer font-mono"
         title={citation.text_span}
         onClick={() => openPdfModal(citation.doc_id, citation.pages[0])}
       >
@@ -20,7 +20,6 @@ export default function CitationBadge({ citation }: Props) {
     );
   }
 
-  // Web citation
   return (
     <a
       href={citation.url}

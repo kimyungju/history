@@ -64,7 +64,8 @@ export default function GraphCanvas() {
           "text-valign": "bottom",
           "text-halign": "center",
           "font-size": "10px",
-          color: "#E5E7EB",
+          "font-family": "'Plus Jakarta Sans', system-ui, sans-serif",
+          color: "#d6d3d1",
           "text-margin-y": 6,
           width: 40,
           height: 40,
@@ -76,7 +77,7 @@ export default function GraphCanvas() {
       {
         selector: "node[?highlighted]",
         style: {
-          "border-color": "#F97316",
+          "border-color": "#d4ad6a",
           "border-width": 4,
           "background-color": "data(color)",
         },
@@ -94,10 +95,11 @@ export default function GraphCanvas() {
           "curve-style": "bezier",
           "target-arrow-shape": "triangle",
           "arrow-scale": 0.8,
-          "line-color": "#4B5563",
-          "target-arrow-color": "#4B5563",
+          "line-color": "#57534e",
+          "target-arrow-color": "#57534e",
           "font-size": "8px",
-          color: "#9CA3AF",
+          "font-family": "'Plus Jakarta Sans', system-ui, sans-serif",
+          color: "#a8a29e",
           "text-rotation": "autorotate",
           width: 1.5,
         },
@@ -105,8 +107,8 @@ export default function GraphCanvas() {
       {
         selector: "edge[?highlighted]",
         style: {
-          "line-color": "#F97316",
-          "target-arrow-color": "#F97316",
+          "line-color": "#d4ad6a",
+          "target-arrow-color": "#d4ad6a",
           width: 3,
         },
       },
@@ -168,9 +170,17 @@ export default function GraphCanvas() {
   if (!graphData) {
     return (
       <div className="flex items-center justify-center h-full">
-        <p className="text-gray-500 text-sm text-center px-8">
-          Ask a question or search for an entity to see the knowledge graph
-        </p>
+        <div className="text-center max-w-xs animate-fade-in">
+          <div className="flex justify-center gap-3 text-stone-700 text-lg mb-3 select-none">
+            <span>&#9671;</span><span>&#9671;</span><span>&#9671;</span>
+          </div>
+          <h3 className="font-display text-base font-medium text-stone-400">
+            Knowledge Graph
+          </h3>
+          <p className="text-stone-600 text-sm mt-1.5">
+            Ask a question or search for an entity to explore the document network.
+          </p>
+        </div>
       </div>
     );
   }

@@ -14,7 +14,7 @@ export default function CategoryFilter() {
   };
 
   return (
-    <div className="flex flex-wrap gap-1.5 px-4 py-2 border-b border-gray-800">
+    <div className="flex flex-wrap gap-1.5 px-4 py-2 border-b border-stone-800/60">
       {MAIN_CATEGORIES.map((cat) => {
         const active = filterCategories.includes(cat);
         return (
@@ -23,8 +23,8 @@ export default function CategoryFilter() {
             onClick={() => toggle(cat)}
             className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
               active
-                ? "bg-blue-600 text-white"
-                : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                ? "bg-ink-600 text-white"
+                : "bg-stone-800 text-stone-400 hover:bg-stone-700 hover:text-stone-300"
             }`}
           >
             {cat}

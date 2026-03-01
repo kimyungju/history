@@ -13,7 +13,6 @@ export default function ChatPanel() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom on new message
   useEffect(() => {
     scrollRef.current?.scrollTo({
       top: scrollRef.current.scrollHeight,
@@ -30,32 +29,41 @@ export default function ChatPanel() {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-stone-950">
       {/* Message area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
-            <p className="text-gray-500 text-sm text-center">
-              Ask a question about the colonial archives
-            </p>
+            <div className="text-center max-w-xs animate-fade-in">
+              <span className="text-ink-500/60 text-3xl select-none">&#9670;</span>
+              <h2 className="font-display text-xl font-semibold text-stone-300 mt-3">
+                Research Assistant
+              </h2>
+              <p className="text-stone-500 text-sm mt-2 leading-relaxed">
+                Ask questions about colonial-era documents. Every answer traces back to specific archive pages.
+              </p>
+              <p className="text-stone-600 text-xs mt-4 italic font-display">
+                Try: &ldquo;Who was the Resident of Singapore in 1830?&rdquo;
+              </p>
+            </div>
           </div>
         )}
         {messages.map((msg, i) => (
           <ChatMessage key={i} message={msg} />
         ))}
         {isQuerying && (
-          <div className="flex justify-start mb-3">
-            <div className="bg-gray-800 rounded-2xl px-4 py-3">
-              <div className="flex gap-1">
-                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
-                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
-                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
+          <div className="flex justify-start mb-3 animate-fade-in">
+            <div className="bg-stone-800/80 rounded-2xl px-4 py-3">
+              <div className="flex gap-1.5">
+                <span className="w-1.5 h-1.5 bg-ink-500 rounded-full animate-subtle-pulse" />
+                <span className="w-1.5 h-1.5 bg-ink-500 rounded-full animate-subtle-pulse [animation-delay:200ms]" />
+                <span className="w-1.5 h-1.5 bg-ink-500 rounded-full animate-subtle-pulse [animation-delay:400ms]" />
               </div>
             </div>
           </div>
         )}
         {queryError && (
-          <div className="mb-3 px-4 py-2 bg-red-500/10 border border-red-500/30 rounded-lg">
+          <div className="mb-3 px-4 py-2 bg-red-500/10 border border-red-500/30 rounded-lg animate-fade-in">
             <p className="text-red-400 text-sm">{queryError}</p>
             <button
               className="text-red-400 text-xs underline mt-1"
@@ -73,20 +81,20 @@ export default function ChatPanel() {
       <CategoryFilter />
 
       {/* Input bar */}
-      <form onSubmit={handleSubmit} className="border-t border-gray-800 px-4 py-3">
+      <form onSubmit={handleSubmit} className="border-t border-stone-800/60 px-4 py-3">
         <div className="flex gap-2">
           <input
             type="text"
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
             placeholder="Ask about the archives..."
-            className="flex-1 bg-gray-800 text-gray-100 rounded-lg px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-gray-500"
+            className="flex-1 bg-stone-800/60 text-stone-100 rounded-lg px-4 py-2.5 text-sm outline-none border border-stone-700/50 focus:border-ink-500/50 focus:ring-1 focus:ring-ink-500/30 placeholder:text-stone-500 transition-colors"
             disabled={isQuerying}
           />
           <button
             type="submit"
             disabled={isQuerying || !chatInput.trim()}
-            className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            className="bg-ink-600 hover:bg-ink-500 disabled:bg-stone-800 disabled:text-stone-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
           >
             Send
           </button>

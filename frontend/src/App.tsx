@@ -8,24 +8,46 @@ import NodeSidebar from "./components/NodeSidebar";
 import PdfModal from "./components/PdfModal";
 import AdminPanel from "./components/AdminPanel";
 
+function AppHeader() {
+  const toggleAdmin = useAppStore((s) => s.toggleAdmin);
+
+  return (
+    <div className="h-10 flex items-center justify-between px-4 border-b border-stone-800/60 bg-stone-950 shrink-0">
+      <div className="flex items-center gap-2.5">
+        <span className="text-ink-500 text-lg leading-none select-none">&#9670;</span>
+        <h1 className="font-display text-[15px] font-semibold text-stone-200 tracking-wide">
+          Colonial Archives
+        </h1>
+      </div>
+      <button
+        onClick={toggleAdmin}
+        className="text-stone-500 hover:text-stone-300 text-xs font-medium tracking-wide uppercase transition-colors"
+      >
+        Admin
+      </button>
+    </div>
+  );
+}
+
 export default function App() {
   const splitRatio = useAppStore((s) => s.splitRatio);
   const mobileTab = useAppStore((s) => s.mobileTab);
   const setMobileTab = useAppStore((s) => s.setMobileTab);
-  const toggleAdmin = useAppStore((s) => s.toggleAdmin);
   const isMobile = useIsMobile();
 
   if (isMobile) {
     return (
-      <div className="h-screen w-screen bg-gray-950 text-gray-100 flex flex-col overflow-hidden">
+      <div className="h-screen w-screen bg-stone-950 text-stone-100 flex flex-col overflow-hidden">
+        <AppHeader />
+
         {/* Tab bar */}
-        <div className="flex border-b border-gray-700 shrink-0">
+        <div className="flex border-b border-stone-800/60 shrink-0">
           <button
             onClick={() => setMobileTab("graph")}
             className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
               mobileTab === "graph"
-                ? "text-blue-400 border-b-2 border-blue-400"
-                : "text-gray-500"
+                ? "text-ink-400 border-b-2 border-ink-400"
+                : "text-stone-500"
             }`}
           >
             Knowledge Graph
@@ -34,8 +56,8 @@ export default function App() {
             onClick={() => setMobileTab("chat")}
             className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
               mobileTab === "chat"
-                ? "text-blue-400 border-b-2 border-blue-400"
-                : "text-gray-500"
+                ? "text-ink-400 border-b-2 border-ink-400"
+                : "text-stone-500"
             }`}
           >
             Chat
@@ -45,16 +67,10 @@ export default function App() {
         {/* Active panel */}
         <div className="flex-1 overflow-hidden">
           {mobileTab === "graph" ? (
-            <div className="relative h-full bg-gray-900">
+            <div className="relative h-full bg-stone-900">
               <GraphSearchBar />
               <GraphCanvas />
               <NodeSidebar />
-              <button
-                onClick={toggleAdmin}
-                className="absolute top-2 right-2 z-10 text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded bg-gray-800/80"
-              >
-                Admin
-              </button>
             </div>
           ) : (
             <ChatPanel />
@@ -68,24 +84,20 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen w-screen bg-gray-950 text-gray-100 overflow-hidden">
+    <div className="h-screen w-screen bg-stone-950 text-stone-100 flex flex-col overflow-hidden">
+      <AppHeader />
+
       <div
-        className="h-full grid"
+        className="flex-1 grid min-h-0"
         style={{
           gridTemplateColumns: `${splitRatio * 100}% 4px 1fr`,
         }}
       >
         {/* Graph panel */}
-        <div className="relative overflow-hidden bg-gray-900">
+        <div className="relative overflow-hidden bg-stone-900">
           <GraphSearchBar />
           <GraphCanvas />
           <NodeSidebar />
-          <button
-            onClick={toggleAdmin}
-            className="absolute top-2 right-2 z-10 text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded bg-gray-800/80"
-          >
-            Admin
-          </button>
         </div>
 
         <ResizableSplitter />
