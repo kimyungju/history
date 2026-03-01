@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Colonial Archives Graph-RAG: an AI-powered research tool for querying colonial-era handwritten archive documents (English + Chinese) via a chatbot backed by a knowledge graph. Every answer must trace back to specific document pages — zero tolerance for hallucination.
 
-**Current state**: Phase 1 (backend foundation), Phase 2 (graph layer), and Phase 3 (React frontend) code complete. Backend **tested end-to-end with real data** — full 9-step ingestion pipeline works (OCR → chunk → embed → vector upsert → entity extraction → normalization → Neo4j MERGE). Query endpoint works (vector search + graph traversal + Gemini answer generation). Frontend not yet tested with live backend. Phases 4–5 (web augmentation, production hardening) planned but not yet implemented.
+**Current state**: Phases 1–4 code complete, Phase 5 mostly complete (5.1–5.3, 5.5–5.7 done). Backend **tested end-to-end with real data** — full 9-step ingestion pipeline works (OCR → chunk → embed → vector upsert → entity extraction → normalization → Neo4j MERGE). Query endpoint works (parallel vector search + graph traversal + Gemini answer generation + Tavily web fallback). Frontend code complete with mobile responsive layout. 53 tests (24 backend + 29 frontend). Only remaining: T11 GCP infra provisioning, 3.8 integration testing, 5.4 batch ingestion (deferred).
 
 ## Commands
 
@@ -16,15 +16,28 @@ cd backend && pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8090
 # Swagger docs at http://localhost:8090/docs
 
+# Run frontend
+cd frontend && npm install && npm run dev
+
 # Run via Docker Compose
 cd infra && docker-compose up --build
 # Requires GCP credentials — see backend/.env.example
 
+# Backend tests (use Python 3.13, not 3.14 which lacks vertexai)
+cd backend && "C:/Users/yjkim/AppData/Local/Programs/Python/Python313/python.exe" -m pytest tests/ -v
+# 24 tests: 6 formatter + 3 trace + 2 log_stage + 1 health + 3 hybrid_retrieval + 2 admin + 3 web_search + 4 phase4
+
+# Frontend tests
+cd frontend && npx vitest run
+# 29 tests across 5 test files
+
+# Lint
+cd backend && ruff check app/
+cd frontend && npx eslint src/
+
 # gcloud auth (run in PowerShell, not bash)
 gcloud auth application-default login
 gcloud config set project aihistory-488807
-
-# No test suite yet — testing is planned for Phase 5
 ```
 
 ## Architecture
@@ -37,7 +50,7 @@ gcloud config set project aihistory-488807
 - `config/settings.py` — Pydantic Settings reading from `.env`. Values with `PLACEHOLDER_*` defaults must be replaced. Tunable thresholds have working defaults.
 - `config/document_categories.json` — Maps PDF filenames → 5 predefined archive categories
 - `models/schemas.py` — All Pydantic v2 models (requests, responses, internal types like `Chunk`, `Evidence`, `EntityExtractionResult`, `GraphNode/Edge/Payload`)
-- `routers/` — Thin HTTP layer: `ingest.py` (PDF ingestion + entity extraction + Neo4j), `query.py` (Q&A + signed URLs), `graph.py` (entity search + subgraph retrieval)
+- `routers/` — Thin HTTP layer: `ingest.py` (PDF ingestion + entity extraction + Neo4j), `query.py` (Q&A + signed URLs), `graph.py` (entity search + subgraph retrieval), `admin.py` (OCR quality + document listing)
 - `services/` — Business logic, one service per concern:
   - `storage.py` — Cloud Storage read/write/signed URLs
   - `ocr.py` — Document AI OCR with page batching (15/batch) and semaphore concurrency (5)
@@ -49,6 +62,8 @@ gcloud config set project aihistory-488807
   - `entity_normalization.py` — Three-stage dedup (exact match, embedding similarity, fuzzy string via rapidfuzz)
   - `neo4j_service.py` — Async Neo4j driver, MERGE entities/relationships, subgraph traversal, entity search
   - `hybrid_retrieval.py` — Orchestrates parallel vector search + graph traversal, combined scoring, GraphPayload in response
+  - `web_search.py` — Tavily web search fallback when archive relevance < 0.7
+  - `auto_classification.py` — Gemini-based document category classification for unmapped PDFs
 
 ### Data Flow
 
@@ -71,19 +86,22 @@ gcloud config set project aihistory-488807
 
 ## Planning Documents
 
-- `dev/active/colonial-archives-graph-rag/` — Context doc (architecture reference), plan, and task breakdown (5 phases, 39 tasks total)
-- `docs/plans/` — Design document and Phase 1 implementation plan
+- `dev/active/colonial-archives-graph-rag/` — Context doc (architecture reference), plan, and task breakdown (5 phases)
+- `docs/plans/` — Design documents, implementation plans for each phase
+- `docs/plans/2026-03-01-phase5-remaining-tasks.md` — Latest execution plan (5.2, 5.3, 5.5, 5.6)
 
 ## API Endpoints
 
 | Method | Path | Status |
 |--------|------|--------|
-| POST | `/ingest_pdf` | Phase 1+2 ✓ (includes entity extraction) |
+| POST | `/ingest_pdf` | Phase 1+2+4 ✓ (OCR + graph + auto-classification) |
 | GET | `/ingest_status/{job_id}` | Phase 1 ✓ |
-| POST | `/query` | Phase 2 ✓ (parallel vector+graph) |
+| POST | `/query` | Phase 2+4 ✓ (parallel vector+graph + web fallback) |
 | GET | `/document/signed_url` | Phase 1 ✓ |
 | GET | `/graph/search?q=&limit=&categories=` | Phase 2 ✓ |
 | GET | `/graph/{canonical_id}?categories=` | Phase 2 ✓ |
+| GET | `/admin/documents` | Phase 5.3 ✓ (list ingested doc IDs) |
+| GET | `/admin/documents/{doc_id}/ocr` | Phase 5.3 ✓ (OCR quality + flagged pages) |
 | GET | `/health` | Phase 2 ✓ (includes Neo4j status) |
 
 ## Environment Setup
