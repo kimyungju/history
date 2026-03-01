@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.models.schemas import GraphNode, GraphPayload
 from app.services.hybrid_retrieval import HybridRetrievalService
 
 
@@ -95,3 +96,52 @@ class TestLoadChunkContextsParallel:
         # doc_b chunk has empty text due to failure
         doc_b = next(c for c in contexts if c["id"] == "doc_b_chunk_0")
         assert doc_b["text"] == ""
+
+
+class TestGraphSearchParallel:
+    """Verify _graph_search runs entity lookups concurrently."""
+
+    @pytest.mark.asyncio
+    async def test_searches_multiple_hints_concurrently(self, service):
+        """All entity hint lookups should run via asyncio.gather."""
+        node_a = GraphNode(
+            canonical_id="entity_alice_001",
+            name="Alice",
+            main_categories=[],
+            highlighted=True,
+        )
+        node_b = GraphNode(
+            canonical_id="entity_bob_001",
+            name="Bob",
+            main_categories=[],
+            highlighted=False,
+        )
+
+        subgraph_a = GraphPayload(nodes=[node_a], edges=[], center_node="entity_alice_001")
+        subgraph_b = GraphPayload(nodes=[node_b], edges=[], center_node="entity_bob_001")
+
+        async def fake_search(hint, limit=5, categories=None):
+            if hint == "Alice":
+                return [node_a]
+            elif hint == "Bob":
+                return [node_b]
+            return []
+
+        async def fake_subgraph(cid, categories=None):
+            if cid == "entity_alice_001":
+                return subgraph_a
+            elif cid == "entity_bob_001":
+                return subgraph_b
+            return None
+
+        with patch("app.services.hybrid_retrieval.neo4j_service") as mock_neo4j:
+            mock_neo4j.search_entities.side_effect = fake_search
+            mock_neo4j.get_subgraph.side_effect = fake_subgraph
+
+            result = await service._graph_search(["Alice", "Bob"], None)
+
+            assert result["payload"] is not None
+            assert len(result["payload"].nodes) == 2
+            # Both hints searched
+            assert mock_neo4j.search_entities.call_count == 2
+            assert mock_neo4j.get_subgraph.call_count == 2

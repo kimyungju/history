@@ -245,35 +245,48 @@ class HybridRetrievalService:
     ) -> dict:
         """Search Neo4j for entities matching hints, return subgraph + context.
 
+        Searches and subgraph fetches are parallelized via asyncio.gather.
+
         Returns a dict with ``payload`` (GraphPayload | None) and
         ``context_chunks`` (list of context dicts for LLM).
         """
         if not entity_hints:
             return {"payload": None, "context_chunks": []}
 
+        # --- Phase 1: Search all entity hints in parallel ---
+        search_results = await asyncio.gather(*[
+            neo4j_service.search_entities(hint, limit=5, categories=categories)
+            for hint in entity_hints
+        ], return_exceptions=True)
+
+        # Collect seeds for subgraph fetches
+        seeds: list[GraphNode] = []
+        for result in search_results:
+            if isinstance(result, BaseException) or not result:
+                continue
+            seeds.append(result[0])
+
+        if not seeds:
+            return {"payload": None, "context_chunks": []}
+
+        # --- Phase 2: Fetch all subgraphs in parallel ---
+        subgraph_results = await asyncio.gather(*[
+            neo4j_service.get_subgraph(seed.canonical_id, categories=categories)
+            for seed in seeds
+        ], return_exceptions=True)
+
+        # --- Phase 3: Merge results ---
         all_nodes: dict[str, GraphNode] = {}
         all_edges: list[GraphEdge] = []
         context_chunks: list[dict] = []
         center_node: str | None = None
 
-        for hint in entity_hints:
-            matching_nodes = await neo4j_service.search_entities(
-                hint, limit=5, categories=categories
-            )
-
-            if not matching_nodes:
+        for subgraph in subgraph_results:
+            if isinstance(subgraph, BaseException) or subgraph is None:
                 continue
 
-            # Use first match as seed for subgraph
-            seed = matching_nodes[0]
-            if center_node is None:
-                center_node = seed.canonical_id
-
-            subgraph = await neo4j_service.get_subgraph(
-                seed.canonical_id, categories=categories
-            )
-            if subgraph is None:
-                continue
+            if center_node is None and subgraph.nodes:
+                center_node = subgraph.nodes[0].canonical_id
 
             for node in subgraph.nodes:
                 all_nodes[node.canonical_id] = node
