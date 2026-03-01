@@ -6,6 +6,7 @@ with background processing and job status tracking.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path, PurePosixPath
@@ -86,7 +87,10 @@ async def _run_ingestion(job_id: str, pdf_url: str, doc_id: str) -> None:
     try:
         # ---- Step 1: Download PDF -------------------------------------------
         with log_stage("pdf_download", logger=logger, job_id=job_id, doc_id=doc_id):
-            pdf_bytes = storage_service.read_pdf_bytes(pdf_url)
+            loop = asyncio.get_event_loop()
+            pdf_bytes = await loop.run_in_executor(
+                None, storage_service.read_pdf_bytes, pdf_url
+            )
 
         # ---- Step 2: OCR ----------------------------------------------------
         with log_stage("ocr", logger=logger, job_id=job_id, doc_id=doc_id):
@@ -103,7 +107,9 @@ async def _run_ingestion(job_id: str, pdf_url: str, doc_id: str) -> None:
                 }
                 for p in ocr_result.pages
             ]
-            storage_service.upload_json(f"ocr/{doc_id}_ocr.json", ocr_data)
+            await loop.run_in_executor(
+                None, storage_service.upload_json, f"ocr/{doc_id}_ocr.json", ocr_data
+            )
             logger.info("[%s] Stored OCR JSON to ocr/%s_ocr.json", job_id, doc_id)
 
             # Flag low-confidence pages
@@ -176,7 +182,9 @@ async def _run_ingestion(job_id: str, pdf_url: str, doc_id: str) -> None:
 
             # Store chunks to GCS
             chunks_data = [chunk.model_dump() for chunk in chunks]
-            storage_service.upload_json(f"chunks/{doc_id}.json", chunks_data)
+            await loop.run_in_executor(
+                None, storage_service.upload_json, f"chunks/{doc_id}.json", chunks_data
+            )
             logger.info("[%s] Stored %d chunks to chunks/%s.json", job_id, len(chunks), doc_id)
 
         # ---- Step 5: Embed ---------------------------------------------------

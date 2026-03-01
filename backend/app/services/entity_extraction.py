@@ -117,23 +117,33 @@ class EntityExtractionService:
     ) -> EntityExtractionResult:
         """Extract entities and relationships from a list of chunks.
 
-        Processes each chunk individually and aggregates results.  A failure
-        in one chunk does not prevent extraction from the remaining chunks.
+        Processes chunks concurrently (up to 5 at a time) and aggregates
+        results.  A failure in one chunk does not prevent extraction from
+        the remaining chunks.
         """
         all_entities: list[EntityExtractionResult.ExtractedEntity] = []
         all_relationships: list[EntityExtractionResult.ExtractedRelationship] = []
 
-        for chunk in chunks:
-            try:
-                result = await self._extract_from_chunk(chunk)
+        semaphore = asyncio.Semaphore(5)
+
+        async def _extract_safe(chunk: Chunk) -> EntityExtractionResult | None:
+            async with semaphore:
+                try:
+                    return await self._extract_from_chunk(chunk)
+                except Exception:
+                    logger.warning(
+                        "Entity extraction failed for chunk %s; skipping",
+                        chunk.chunk_id,
+                        exc_info=True,
+                    )
+                    return None
+
+        results = await asyncio.gather(*[_extract_safe(c) for c in chunks])
+
+        for result in results:
+            if result is not None:
                 all_entities.extend(result.entities)
                 all_relationships.extend(result.relationships)
-            except Exception:
-                logger.warning(
-                    "Entity extraction failed for chunk %s; skipping",
-                    chunk.chunk_id,
-                    exc_info=True,
-                )
 
         # Filter by confidence threshold
         min_confidence = settings.ENTITY_CONFIDENCE_MIN

@@ -10,7 +10,10 @@ from app.models.schemas import Chunk
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_BATCH_SIZE = 250  # Vertex AI limit per request
+EMBEDDING_BATCH_SIZE = 250  # Vertex AI items-per-request limit
+# Vertex AI text-embedding-004 has a 20,000 token limit per request.
+# With ~450-token chunks (some up to ~600), 25 chunks ≈ 15,000 tokens — safe margin.
+EMBEDDING_TOKEN_SAFE_BATCH = 25
 
 
 class EmbeddingsService:
@@ -62,8 +65,9 @@ class EmbeddingsService:
         all_vectors: list[list[float]] = []
         loop = asyncio.get_event_loop()
 
-        for start in range(0, len(texts), EMBEDDING_BATCH_SIZE):
-            batch = texts[start : start + EMBEDDING_BATCH_SIZE]
+        batch_size = min(EMBEDDING_BATCH_SIZE, EMBEDDING_TOKEN_SAFE_BATCH)
+        for start in range(0, len(texts), batch_size):
+            batch = texts[start : start + batch_size]
             inputs = [
                 TextEmbeddingInput(text=t, task_type=task_type) for t in batch
             ]
