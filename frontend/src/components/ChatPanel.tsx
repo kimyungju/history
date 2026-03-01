@@ -31,7 +31,7 @@ export default function ChatPanel() {
   return (
     <div className="flex flex-col h-full bg-stone-950">
       {/* Message area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 min-h-0">
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center max-w-xs animate-fade-in">
@@ -78,10 +78,10 @@ export default function ChatPanel() {
         )}
       </div>
 
-      <CategoryFilter />
+      <div className="shrink-0"><CategoryFilter /></div>
 
       {/* Input bar */}
-      <form onSubmit={handleSubmit} className="border-t border-stone-800/60 px-4 py-3">
+      <form onSubmit={handleSubmit} className="shrink-0 border-t border-stone-800/60 px-4 py-3">
         <div className="flex gap-2">
           <input
             type="text"
