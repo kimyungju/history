@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.env
+*.egg
+.venv/
+venv/
+node_modules/
+.DS_Store
+*.log
+
+# GCP credentials
+*-service-account.json
+credentials*.json
+*-key.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Claude Code
+.claude/worktrees/
+
+# Build artifacts
+frontend/dist/

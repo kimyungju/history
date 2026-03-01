@@ -1,0 +1,381 @@
+"""Hybrid retrieval service for the Colonial Archives Graph-RAG backend.
+
+Phase 2 implementation: parallel vector search + Neo4j graph traversal,
+combined relevance scoring, and GraphPayload in the response.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import re
+from collections import defaultdict
+
+from app.config.settings import settings
+from app.models.schemas import (
+    ArchiveCitation,
+    GraphEdge,
+    GraphNode,
+    GraphPayload,
+    QueryResponse,
+)
+from app.services.embeddings import embeddings_service
+from app.services.llm import llm_service
+from app.services.neo4j_service import neo4j_service
+from app.services.storage import storage_service
+from app.services.vector_search import vector_search_service
+
+logger = logging.getLogger(__name__)
+
+FALLBACK_ANSWER = "I cannot answer this based on the available sources."
+
+
+class HybridRetrievalService:
+    """Orchestrates vector search, graph traversal, and answer generation.
+
+    Pipeline:
+        1. Embed query
+        2a. Vector search (parallel)
+        2b. Graph traversal from entity hints (parallel)
+        3. Merge + score results
+        4. Generate answer via LLM
+        5. Build response with citations and graph payload
+    """
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def query(
+        self,
+        question: str,
+        filter_categories: list[str] | None = None,
+    ) -> QueryResponse:
+        """Run the full hybrid-retrieval pipeline and return a QueryResponse."""
+
+        # Step 1 — Embed the question.
+        query_embedding: list[float] = await embeddings_service.embed_query(question)
+
+        # Step 1b — Extract entity hints from the question (simple keyword extraction).
+        entity_hints = self._extract_entity_hints(question)
+        logger.info("Entity hints from question: %s", entity_hints)
+
+        # Step 2 — Parallel: vector search + graph traversal.
+        vector_task = vector_search_service.search(
+            query_embedding, filter_categories=filter_categories
+        )
+        graph_task = self._graph_search(entity_hints, filter_categories)
+
+        vector_results, graph_result = await asyncio.gather(
+            vector_task, graph_task, return_exceptions=True
+        )
+
+        # Handle exceptions from parallel tasks
+        if isinstance(vector_results, BaseException):
+            logger.warning("Vector search failed: %s", vector_results)
+            vector_results = []
+        if isinstance(graph_result, BaseException):
+            logger.warning("Graph search failed: %s", graph_result)
+            graph_result = {"payload": None, "context_chunks": []}
+
+        # Step 3 — Early exit when there are no results.
+        if not vector_results and not graph_result.get("context_chunks"):
+            logger.info("No results for question; returning fallback")
+            return QueryResponse(
+                answer=FALLBACK_ANSWER,
+                source_type="archive",
+                citations=[],
+                graph=None,
+            )
+
+        # Step 4 — Load chunk texts from GCS for vector results.
+        vector_context: list[dict] = []
+        if vector_results:
+            vector_context = await self._load_chunk_contexts(vector_results)
+
+        # Step 5 — Merge vector + graph context chunks, deduplicate.
+        graph_context = graph_result.get("context_chunks", [])
+        merged_context = self._merge_contexts(vector_context, graph_context)
+
+        # Step 6 — Compute combined relevance score.
+        vector_score = 0.0
+        if vector_results:
+            vector_score = sum(r["distance"] for r in vector_results) / len(
+                vector_results
+            )
+
+        graph_hit_ratio = 0.0
+        if entity_hints and graph_context:
+            graph_hit_ratio = min(len(graph_context) / max(len(entity_hints), 1), 1.0)
+
+        # Phase 2 combined scoring
+        if graph_context:
+            relevance_score = vector_score * 0.6 + graph_hit_ratio * 0.4
+        else:
+            relevance_score = vector_score
+
+        logger.info(
+            "Relevance: vector=%.4f, graph_ratio=%.4f, combined=%.4f",
+            vector_score,
+            graph_hit_ratio,
+            relevance_score,
+        )
+
+        # Web fallback placeholder (Phase 4)
+        if relevance_score < settings.RELEVANCE_THRESHOLD:
+            logger.warning(
+                "Relevance %.4f below threshold %.2f — web fallback not yet implemented",
+                relevance_score,
+                settings.RELEVANCE_THRESHOLD,
+            )
+
+        source_type = "archive"
+
+        # Step 7 — Generate answer via LLM.
+        llm_result: dict = await llm_service.generate_answer(
+            question, merged_context, source_type
+        )
+        answer_text: str = llm_result["answer"]
+
+        # Step 8 — Build ArchiveCitation list.
+        citations: list[ArchiveCitation] = []
+        for idx, chunk in enumerate(merged_context, start=1):
+            text_span = chunk.get("text", "")
+            if len(text_span) > 300:
+                text_span = text_span[:300]
+
+            citations.append(
+                ArchiveCitation(
+                    id=idx,
+                    doc_id=chunk.get("doc_id", ""),
+                    pages=chunk.get("pages", []),
+                    text_span=text_span,
+                    confidence=chunk.get("confidence", 0.0),
+                )
+            )
+
+        # Step 9 — Build graph payload.
+        graph_payload = graph_result.get("payload")
+
+        return QueryResponse(
+            answer=answer_text,
+            source_type=source_type,
+            citations=citations,
+            graph=graph_payload,
+        )
+
+    # ------------------------------------------------------------------
+    # Entity hint extraction
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_entity_hints(question: str) -> list[str]:
+        """Extract likely entity names from the question.
+
+        Uses simple heuristics — capitalized multi-word phrases and proper
+        nouns.  No LLM call to keep latency low.
+        """
+        # Find sequences of capitalized words (2+ words = likely entity)
+        # e.g. "J. Anderson", "Colonial Trade Commission"
+        pattern = r"\b(?:[A-Z][a-z.]+(?:\s+[A-Z][a-z.]+)+)\b"
+        multi_word = re.findall(pattern, question)
+
+        # Also grab single capitalized words that aren't common stop words
+        stop_words = {
+            "What", "Who", "Where", "When", "How", "Why", "Which",
+            "Does", "Did", "Was", "Were", "Are", "Is", "The", "And",
+            "For", "With", "From", "About", "Into", "That", "This",
+            "Have", "Has", "Had", "Can", "Could", "Would", "Should",
+            "Tell", "Describe", "Explain",
+        }
+        single_caps = re.findall(r"\b([A-Z][a-z]{2,})\b", question)
+        single_caps = [w for w in single_caps if w not in stop_words]
+
+        # Combine and deduplicate, preferring multi-word matches
+        hints: list[str] = list(multi_word)
+        for word in single_caps:
+            # Skip if already part of a multi-word match
+            if not any(word in mw for mw in multi_word):
+                hints.append(word)
+
+        return hints
+
+    # ------------------------------------------------------------------
+    # Graph search
+    # ------------------------------------------------------------------
+
+    async def _graph_search(
+        self,
+        entity_hints: list[str],
+        categories: list[str] | None,
+    ) -> dict:
+        """Search Neo4j for entities matching hints, return subgraph + context.
+
+        Returns a dict with ``payload`` (GraphPayload | None) and
+        ``context_chunks`` (list of context dicts for LLM).
+        """
+        if not entity_hints:
+            return {"payload": None, "context_chunks": []}
+
+        all_nodes: dict[str, GraphNode] = {}
+        all_edges: list[GraphEdge] = []
+        context_chunks: list[dict] = []
+        center_node: str | None = None
+
+        for hint in entity_hints:
+            matching_nodes = await neo4j_service.search_entities(
+                hint, limit=5, categories=categories
+            )
+
+            if not matching_nodes:
+                continue
+
+            # Use first match as seed for subgraph
+            seed = matching_nodes[0]
+            if center_node is None:
+                center_node = seed.canonical_id
+
+            subgraph = await neo4j_service.get_subgraph(
+                seed.canonical_id, categories=categories
+            )
+            if subgraph is None:
+                continue
+
+            for node in subgraph.nodes:
+                all_nodes[node.canonical_id] = node
+
+            all_edges.extend(subgraph.edges)
+
+            # Build context chunk from entity evidence for LLM grounding
+            for node in subgraph.nodes:
+                if node.highlighted:
+                    context_chunks.append(
+                        {
+                            "id": node.canonical_id,
+                            "text": f"Entity: {node.name}. "
+                            + " ".join(
+                                f"{k}: {v}" for k, v in node.attributes.items()
+                            ),
+                            "doc_id": "",
+                            "pages": [],
+                            "confidence": 0.8,
+                            "cite_type": "archive",
+                        }
+                    )
+
+        # Deduplicate edges
+        seen_edges: set[str] = set()
+        unique_edges: list[GraphEdge] = []
+        for edge in all_edges:
+            key = f"{edge.source}-{edge.type}-{edge.target}"
+            if key not in seen_edges:
+                seen_edges.add(key)
+                unique_edges.append(edge)
+
+        payload = None
+        if all_nodes:
+            payload = GraphPayload(
+                nodes=list(all_nodes.values()),
+                edges=unique_edges,
+                center_node=center_node or "",
+            )
+
+        return {"payload": payload, "context_chunks": context_chunks}
+
+    # ------------------------------------------------------------------
+    # Context merging
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _merge_contexts(
+        vector_context: list[dict],
+        graph_context: list[dict],
+    ) -> list[dict]:
+        """Merge vector and graph context chunks, deduplicating by id."""
+        seen_ids: set[str] = set()
+        merged: list[dict] = []
+
+        # Vector results take priority
+        for chunk in vector_context:
+            cid = chunk.get("id", "")
+            if cid not in seen_ids:
+                seen_ids.add(cid)
+                merged.append(chunk)
+
+        for chunk in graph_context:
+            cid = chunk.get("id", "")
+            if cid not in seen_ids:
+                seen_ids.add(cid)
+                merged.append(chunk)
+
+        return merged
+
+    # ------------------------------------------------------------------
+    # GCS chunk loading (unchanged from Phase 1)
+    # ------------------------------------------------------------------
+
+    async def _load_chunk_contexts(
+        self,
+        vector_results: list[dict],
+    ) -> list[dict]:
+        """Load full chunk texts from GCS and merge with vector distances."""
+
+        distance_by_chunk: dict[str, float] = {
+            r["id"]: r["distance"] for r in vector_results
+        }
+
+        doc_chunks: dict[str, list[str]] = defaultdict(list)
+        for chunk_id in distance_by_chunk:
+            parts = chunk_id.split("_chunk_", 1)
+            doc_id = parts[0] if len(parts) == 2 else chunk_id
+            doc_chunks[doc_id].append(chunk_id)
+
+        chunk_lookup: dict[str, dict] = {}
+        for doc_id, chunk_ids in doc_chunks.items():
+            blob_path = f"chunks/{doc_id}.json"
+            try:
+                blob = storage_service._bucket.blob(blob_path)
+                raw_text = blob.download_as_text()
+                chunks_data = json.loads(raw_text)
+
+                for chunk in chunks_data:
+                    cid = chunk.get("chunk_id", "")
+                    if cid in distance_by_chunk:
+                        chunk_lookup[cid] = chunk
+            except Exception:
+                logger.warning(
+                    "Failed to load chunk file from GCS: %s",
+                    blob_path,
+                    exc_info=True,
+                )
+
+        context_chunks: list[dict] = []
+        for chunk_id, distance in distance_by_chunk.items():
+            stored = chunk_lookup.get(chunk_id, {})
+            parts = chunk_id.split("_chunk_", 1)
+            doc_id = parts[0] if len(parts) == 2 else chunk_id
+
+            context_chunks.append(
+                {
+                    "id": chunk_id,
+                    "text": stored.get("text", ""),
+                    "doc_id": doc_id,
+                    "pages": stored.get("pages", []),
+                    "confidence": distance,
+                    "cite_type": "archive",
+                }
+            )
+
+        context_chunks.sort(key=lambda c: c["confidence"], reverse=True)
+
+        logger.info(
+            "Loaded %d / %d chunk contexts from GCS",
+            len(chunk_lookup),
+            len(distance_by_chunk),
+        )
+        return context_chunks
+
+
+# Module-level singleton
+hybrid_retrieval_service = HybridRetrievalService()
