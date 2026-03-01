@@ -14,6 +14,9 @@ from app.config.settings import settings
 logger = logging.getLogger(__name__)
 
 
+PREFERRED_SOURCES = "site:biblioasia.nlb.gov.sg OR site:roots.gov.sg OR site:britannica.com OR site:nlb.gov.sg"
+
+
 class WebSearchService:
     """Wraps the Tavily API for web search fallback."""
 
@@ -41,7 +44,9 @@ class WebSearchService:
             response = await loop.run_in_executor(
                 None,
                 lambda: self.client.search(
-                    query, search_depth="basic", max_results=max_results
+                    f"{query} {PREFERRED_SOURCES}",
+                    search_depth="basic",
+                    max_results=max_results,
                 ),
             )
         except Exception:
