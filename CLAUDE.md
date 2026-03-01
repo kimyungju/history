@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Colonial Archives Graph-RAG: an AI-powered research tool for querying colonial-era handwritten archive documents (English + Chinese) via a chatbot backed by a knowledge graph. Every answer must trace back to specific document pages — zero tolerance for hallucination.
 
-**Current state**: Phases 1–4 code complete, Phase 5 mostly complete (5.1–5.3, 5.5–5.7 done). Backend **tested end-to-end with real data** — full 9-step ingestion pipeline works (OCR → chunk → embed → vector upsert → entity extraction → normalization → Neo4j MERGE). Query endpoint works (parallel vector search + graph traversal + Gemini answer generation + Tavily web fallback). Frontend code complete with mobile responsive layout. 53 tests (24 backend + 29 frontend). Only remaining: T11 GCP infra provisioning, 3.8 integration testing, 5.4 batch ingestion (deferred).
+**Current state**: Phases 1–4 code complete, Phase 5 mostly complete (5.1–5.3, 5.5–5.7 done). Backend **tested end-to-end with real data** — full 9-step ingestion pipeline works (OCR → chunk → embed → vector upsert → entity extraction → normalization → Neo4j MERGE). Query endpoint works (parallel vector search + graph traversal + Gemini answer generation + Tavily web fallback). Frontend code complete with mobile responsive layout and refined archival design theme (Crimson Pro + Plus Jakarta Sans + IBM Plex Mono typography, warm stone/ink palette, animations). 53 tests (24 backend + 29 frontend). Only remaining: T11 GCP infra provisioning, 3.8 integration testing, 5.4 batch ingestion (deferred).
 
 ## Commands
 
@@ -88,7 +88,8 @@ gcloud config set project aihistory-488807
 
 - `dev/active/colonial-archives-graph-rag/` — Context doc (architecture reference), plan, and task breakdown (5 phases)
 - `docs/plans/` — Design documents, implementation plans for each phase
-- `docs/plans/2026-03-01-phase5-remaining-tasks.md` — Latest execution plan (5.2, 5.3, 5.5, 5.6)
+- `docs/plans/2026-03-01-phase5-remaining-tasks.md` — Phase 5 execution plan (5.2, 5.3, 5.5, 5.6)
+- `docs/plans/2026-03-01-frontend-design-refinement.md` — Frontend design refinement plan
 
 ## API Endpoints
 
