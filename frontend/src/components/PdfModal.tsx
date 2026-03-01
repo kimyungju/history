@@ -20,6 +20,9 @@ export default function PdfModal() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [showText, setShowText] = useState(false);
+  const [pageText, setPageText] = useState<string | null>(null);
+  const [textLoading, setTextLoading] = useState(false);
 
   // Fetch signed URL and load PDF
   useEffect(() => {
@@ -84,6 +87,27 @@ export default function PdfModal() {
     };
   }, [pdfDoc, currentPage, scale]);
 
+  // Fetch OCR text when text view is active
+  useEffect(() => {
+    if (!showText || !isPdfModalOpen || !pdfModalProps) return;
+
+    let cancelled = false;
+    setTextLoading(true);
+
+    (async () => {
+      try {
+        const data = await apiClient.getPageText(pdfModalProps.docId, currentPage);
+        if (!cancelled) setPageText(data.text);
+      } catch {
+        if (!cancelled) setPageText("Failed to load OCR text.");
+      } finally {
+        if (!cancelled) setTextLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [showText, currentPage, isPdfModalOpen, pdfModalProps]);
+
   // Escape key to close
   useEffect(() => {
     if (!isPdfModalOpen) return;
@@ -93,6 +117,14 @@ export default function PdfModal() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [isPdfModalOpen, closePdfModal]);
+
+  // Reset text view when modal closes
+  useEffect(() => {
+    if (!isPdfModalOpen) {
+      setShowText(false);
+      setPageText(null);
+    }
+  }, [isPdfModalOpen]);
 
   const handleBackdropClick = useCallback(
     (e: React.MouseEvent) => {
@@ -122,6 +154,18 @@ export default function PdfModal() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {/* Text toggle */}
+            <button
+              onClick={() => setShowText((v) => !v)}
+              className={`px-2 py-1 text-xs rounded ${
+                showText
+                  ? "bg-ink-500/30 text-ink-400"
+                  : "text-stone-400 hover:text-stone-100"
+              }`}
+            >
+              {showText ? "PDF" : "Text"}
+            </button>
+
             {/* Zoom controls */}
             <button
               onClick={() => setScale((s) => Math.max(0.5, s - 0.2))}
@@ -167,19 +211,21 @@ export default function PdfModal() {
           </div>
         </div>
 
-        {/* Canvas area */}
+        {/* Canvas / Text area */}
         <div className="flex-1 overflow-auto p-4 flex justify-center">
-          {loading && (
+          {loading || textLoading ? (
             <div className="flex items-center justify-center py-20">
               <div className="w-8 h-8 border-2 border-ink-400 border-t-transparent rounded-full animate-spin" />
             </div>
-          )}
-          {error && (
+          ) : error ? (
             <div className="flex items-center justify-center py-20">
               <p className="text-red-400 text-sm">{error}</p>
             </div>
-          )}
-          {!loading && !error && (
+          ) : showText ? (
+            <pre className="w-full max-w-none whitespace-pre-wrap text-stone-200 text-sm font-mono leading-relaxed p-2">
+              {pageText ?? "Toggle text view to load OCR content."}
+            </pre>
+          ) : (
             <canvas ref={canvasRef} className="max-w-full" />
           )}
         </div>
