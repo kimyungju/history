@@ -2,6 +2,7 @@ import type {
   QueryRequest,
   QueryResponse,
   SignedUrlResponse,
+  PageTextResponse,
   GraphNode,
 } from "../types";
 
@@ -52,6 +53,13 @@ export const apiClient = {
     return request<{ documents: string[] }>(`${API_BASE}/admin/documents`, {
       method: "GET",
     });
+  },
+
+  getPageText(docId: string, page: number): Promise<PageTextResponse> {
+    return request<PageTextResponse>(
+      `${API_BASE}/document/${encodeURIComponent(docId)}/pages/${page}/text`,
+      { method: "GET" }
+    );
   },
 
   getOcrQuality(docId: string): Promise<{

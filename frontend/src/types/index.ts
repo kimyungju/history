@@ -65,6 +65,14 @@ export interface SignedUrlResponse {
   expires_in: number;
 }
 
+export interface PageTextResponse {
+  doc_id: string;
+  page: number;
+  text: string;
+  confidence: number;
+  total_pages: number;
+}
+
 export interface OcrConfidenceWarning {
   page: number;
   confidence: number;
