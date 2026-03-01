@@ -123,8 +123,10 @@ export default function GraphCanvas() {
     const nodeEls = activeData.nodes
       .filter(
         (n) =>
-          !n.main_categories.length ||
-          !n.main_categories.every((c) => hiddenCategories.has(c)),
+          // Hide disconnected nodes in overview (they pack into an ugly grid)
+          (!isOverviewMode || n.connection_count > 0) &&
+          (!n.main_categories.length ||
+            !n.main_categories.every((c) => hiddenCategories.has(c))),
       )
       .map((n) => ({
         data: {
