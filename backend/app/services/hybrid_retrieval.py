@@ -12,6 +12,7 @@ import logging
 import re
 from collections import defaultdict
 
+from app.config.logging_config import log_stage
 from app.config.settings import settings
 from app.models.schemas import (
     ArchiveCitation,
@@ -57,21 +58,23 @@ class HybridRetrievalService:
         """Run the full hybrid-retrieval pipeline and return a QueryResponse."""
 
         # Step 1 — Embed the question.
-        query_embedding: list[float] = await embeddings_service.embed_query(question)
+        with log_stage("query_embed", logger=logger):
+            query_embedding: list[float] = await embeddings_service.embed_query(question)
 
         # Step 1b — Extract entity hints from the question (simple keyword extraction).
         entity_hints = self._extract_entity_hints(question)
         logger.info("Entity hints from question: %s", entity_hints)
 
         # Step 2 — Parallel: vector search + graph traversal.
-        vector_task = vector_search_service.search(
-            query_embedding, filter_categories=filter_categories
-        )
-        graph_task = self._graph_search(entity_hints, filter_categories)
+        with log_stage("query_search", logger=logger):
+            vector_task = vector_search_service.search(
+                query_embedding, filter_categories=filter_categories
+            )
+            graph_task = self._graph_search(entity_hints, filter_categories)
 
-        vector_results, graph_result = await asyncio.gather(
-            vector_task, graph_task, return_exceptions=True
-        )
+            vector_results, graph_result = await asyncio.gather(
+                vector_task, graph_task, return_exceptions=True
+            )
 
         # Handle exceptions from parallel tasks
         if isinstance(vector_results, BaseException):
@@ -148,9 +151,10 @@ class HybridRetrievalService:
             source_type = "web_fallback"
 
         # Step 7 — Generate answer via LLM.
-        llm_result: dict = await llm_service.generate_answer(
-            question, merged_context, source_type
-        )
+        with log_stage("llm_generation", logger=logger):
+            llm_result: dict = await llm_service.generate_answer(
+                question, merged_context, source_type
+            )
         answer_text: str = llm_result["answer"]
 
         # Step 8 — Build citation list (archive + web).

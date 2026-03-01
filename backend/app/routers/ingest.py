@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
+from app.config.logging_config import log_stage
 from app.config.settings import settings
 from app.models.schemas import IngestRequest, IngestResponse, OcrConfidenceWarning
 from app.services.chunking import chunking_service
@@ -84,168 +85,167 @@ async def _run_ingestion(job_id: str, pdf_url: str, doc_id: str) -> None:
 
     try:
         # ---- Step 1: Download PDF -------------------------------------------
-        logger.info("[%s] Downloading PDF from %s", job_id, pdf_url)
-        pdf_bytes = storage_service.read_pdf_bytes(pdf_url)
+        with log_stage("pdf_download", logger=logger, job_id=job_id, doc_id=doc_id):
+            pdf_bytes = storage_service.read_pdf_bytes(pdf_url)
 
         # ---- Step 2: OCR ----------------------------------------------------
-        logger.info("[%s] Running OCR for doc_id=%s", job_id, doc_id)
-        ocr_result = await ocr_service.process_pdf(pdf_bytes, doc_id)
+        with log_stage("ocr", logger=logger, job_id=job_id, doc_id=doc_id):
+            ocr_result = await ocr_service.process_pdf(pdf_bytes, doc_id)
 
-        job.pages_total = len(ocr_result.pages)
+            job.pages_total = len(ocr_result.pages)
 
-        # Store raw OCR output to GCS
-        ocr_data = [
-            {
-                "page_number": p.page_number,
-                "text": p.text,
-                "confidence": p.confidence,
-            }
-            for p in ocr_result.pages
-        ]
-        storage_service.upload_json(f"ocr/{doc_id}_ocr.json", ocr_data)
-        logger.info("[%s] Stored OCR JSON to ocr/%s_ocr.json", job_id, doc_id)
+            # Store raw OCR output to GCS
+            ocr_data = [
+                {
+                    "page_number": p.page_number,
+                    "text": p.text,
+                    "confidence": p.confidence,
+                }
+                for p in ocr_result.pages
+            ]
+            storage_service.upload_json(f"ocr/{doc_id}_ocr.json", ocr_data)
+            logger.info("[%s] Stored OCR JSON to ocr/%s_ocr.json", job_id, doc_id)
 
-        # Flag low-confidence pages
-        for page in ocr_result.pages:
-            if page.confidence < settings.OCR_CONFIDENCE_FLAG:
-                job.ocr_confidence_warnings.append(
-                    OcrConfidenceWarning(
-                        page=page.page_number,
-                        confidence=page.confidence,
+            # Flag low-confidence pages
+            for page in ocr_result.pages:
+                if page.confidence < settings.OCR_CONFIDENCE_FLAG:
+                    job.ocr_confidence_warnings.append(
+                        OcrConfidenceWarning(
+                            page=page.page_number,
+                            confidence=page.confidence,
+                        )
                     )
-                )
 
-        if job.ocr_confidence_warnings:
-            logger.warning(
-                "[%s] %d page(s) below OCR confidence threshold (%.2f)",
-                job_id,
-                len(job.ocr_confidence_warnings),
-                settings.OCR_CONFIDENCE_FLAG,
-            )
+            if job.ocr_confidence_warnings:
+                logger.warning(
+                    "[%s] %d page(s) below OCR confidence threshold (%.2f)",
+                    job_id,
+                    len(job.ocr_confidence_warnings),
+                    settings.OCR_CONFIDENCE_FLAG,
+                )
 
         # ---- Step 3: Resolve categories -------------------------------------
-        categories_map = _load_document_categories()
+        with log_stage("category_resolution", logger=logger, job_id=job_id, doc_id=doc_id):
+            categories_map = _load_document_categories()
 
-        # Derive the PDF filename from the URL for the primary lookup
-        blob_name = storage_service._parse_blob_name(pdf_url)
-        pdf_filename = PurePosixPath(blob_name).name
+            # Derive the PDF filename from the URL for the primary lookup
+            blob_name = storage_service._parse_blob_name(pdf_url)
+            pdf_filename = PurePosixPath(blob_name).name
 
-        categories: list[str] = categories_map.get(
-            pdf_filename, categories_map.get(doc_id, [])
-        )
-
-        if not categories:
-            # Phase 4: Auto-classify using first-page OCR text.
-            logger.info(
-                "[%s] No manual categories for %s — running auto-classification",
-                job_id,
-                pdf_filename,
+            categories: list[str] = categories_map.get(
+                pdf_filename, categories_map.get(doc_id, [])
             )
-            first_page_text = ocr_result.pages[0].text if ocr_result.pages else ""
-            if first_page_text:
-                category, confidence = await auto_classification_service.classify(
-                    first_page_text
+
+            if not categories:
+                # Phase 4: Auto-classify using first-page OCR text.
+                logger.info(
+                    "[%s] No manual categories for %s — running auto-classification",
+                    job_id,
+                    pdf_filename,
                 )
-                if confidence >= settings.CLASSIFICATION_CONFIDENCE_MIN:
-                    categories = [category]
-                    logger.info(
-                        "[%s] Auto-classified as '%s' (confidence=%.2f)",
-                        job_id,
-                        category,
-                        confidence,
+                first_page_text = ocr_result.pages[0].text if ocr_result.pages else ""
+                if first_page_text:
+                    category, confidence = await auto_classification_service.classify(
+                        first_page_text
                     )
+                    if confidence >= settings.CLASSIFICATION_CONFIDENCE_MIN:
+                        categories = [category]
+                        logger.info(
+                            "[%s] Auto-classified as '%s' (confidence=%.2f)",
+                            job_id,
+                            category,
+                            confidence,
+                        )
+                    else:
+                        categories = [category]
+                        logger.warning(
+                            "[%s] Auto-classified as '%s' with LOW confidence %.2f (threshold=%.2f) — flagged for review",
+                            job_id,
+                            category,
+                            confidence,
+                            settings.CLASSIFICATION_CONFIDENCE_MIN,
+                        )
                 else:
-                    categories = [category]
-                    logger.warning(
-                        "[%s] Auto-classified as '%s' with LOW confidence %.2f (threshold=%.2f) — flagged for review",
-                        job_id,
-                        category,
-                        confidence,
-                        settings.CLASSIFICATION_CONFIDENCE_MIN,
-                    )
-            else:
-                logger.warning("[%s] No OCR text for auto-classification", job_id)
+                    logger.warning("[%s] No OCR text for auto-classification", job_id)
 
         # ---- Step 4: Chunk ---------------------------------------------------
-        logger.info("[%s] Chunking %d pages with categories=%s", job_id, len(ocr_result.pages), categories)
-        chunks = chunking_service.clean_and_chunk(ocr_result.pages, doc_id, categories)
+        with log_stage("chunking", logger=logger, job_id=job_id, doc_id=doc_id):
+            chunks = chunking_service.clean_and_chunk(ocr_result.pages, doc_id, categories)
 
-        job.chunks_processed = len(chunks)
+            job.chunks_processed = len(chunks)
 
-        # Store chunks to GCS
-        chunks_data = [chunk.model_dump() for chunk in chunks]
-        storage_service.upload_json(f"chunks/{doc_id}.json", chunks_data)
-        logger.info("[%s] Stored %d chunks to chunks/%s.json", job_id, len(chunks), doc_id)
+            # Store chunks to GCS
+            chunks_data = [chunk.model_dump() for chunk in chunks]
+            storage_service.upload_json(f"chunks/{doc_id}.json", chunks_data)
+            logger.info("[%s] Stored %d chunks to chunks/%s.json", job_id, len(chunks), doc_id)
 
         # ---- Step 5: Embed ---------------------------------------------------
-        logger.info("[%s] Embedding %d chunks", job_id, len(chunks))
-        embeddings = await embeddings_service.embed_chunks(chunks)
+        with log_stage("embedding", logger=logger, job_id=job_id, doc_id=doc_id):
+            embeddings = await embeddings_service.embed_chunks(chunks)
 
         # ---- Step 6: Upsert to Vector Search ---------------------------------
-        logger.info("[%s] Upserting %d vectors into Vector Search", job_id, len(embeddings))
-        await vector_search_service.upsert(chunks, embeddings)
+        with log_stage("vector_upsert", logger=logger, job_id=job_id, doc_id=doc_id):
+            await vector_search_service.upsert(chunks, embeddings)
 
         # ---- Steps 7-9: Entity extraction + normalization + Neo4j MERGE ------
         # Wrapped in try/except so graph failures do NOT block vector ingestion.
         try:
             # Step 7: Entity extraction
-            logger.info("[%s] Extracting entities from %d chunks", job_id, len(chunks))
-            extraction_result = await entity_extraction_service.extract_from_chunks(
-                chunks, doc_id
-            )
+            with log_stage("entity_extraction", logger=logger, job_id=job_id, doc_id=doc_id):
+                extraction_result = await entity_extraction_service.extract_from_chunks(
+                    chunks, doc_id
+                )
 
             # Step 8: Entity normalization
-            logger.info(
-                "[%s] Normalizing %d extracted entities",
-                job_id,
-                len(extraction_result.entities),
-            )
-            normalized = await normalization_service.normalize(
-                extraction_result.entities, neo4j_service
-            )
+            with log_stage("entity_normalization", logger=logger, job_id=job_id, doc_id=doc_id):
+                normalized = await normalization_service.normalize(
+                    extraction_result.entities, neo4j_service
+                )
 
             # Build a mapping from entity name -> canonical_id for relationship wiring
             name_to_canonical: dict[str, str] = {}
             for norm_entity in normalized:
                 name_to_canonical[norm_entity.extracted.name] = norm_entity.canonical_id
 
-            # Step 9a: MERGE entities into Neo4j
-            entity_count = 0
-            for norm_entity in normalized:
-                ent = norm_entity.extracted
-                aliases = [ent.name] if not norm_entity.is_new else []
-                await neo4j_service.merge_entity(
-                    canonical_id=norm_entity.canonical_id,
-                    name=ent.name if norm_entity.is_new else ent.name,
-                    main_categories=ent.main_categories,
-                    sub_category=ent.sub_category,
-                    aliases=aliases,
-                    attributes=ent.attributes,
-                    evidence=ent.evidence,
-                )
-                entity_count += 1
+            # Step 9: Neo4j MERGE — entities and relationships
+            with log_stage("neo4j_merge", logger=logger, job_id=job_id, doc_id=doc_id):
+                # Step 9a: MERGE entities into Neo4j
+                entity_count = 0
+                for norm_entity in normalized:
+                    ent = norm_entity.extracted
+                    aliases = [ent.name] if not norm_entity.is_new else []
+                    await neo4j_service.merge_entity(
+                        canonical_id=norm_entity.canonical_id,
+                        name=ent.name if norm_entity.is_new else ent.name,
+                        main_categories=ent.main_categories,
+                        sub_category=ent.sub_category,
+                        aliases=aliases,
+                        attributes=ent.attributes,
+                        evidence=ent.evidence,
+                    )
+                    entity_count += 1
 
-            # Step 9b: MERGE relationships into Neo4j
-            rel_count = 0
-            for rel in extraction_result.relationships:
-                source_id = name_to_canonical.get(rel.from_entity)
-                target_id = name_to_canonical.get(rel.to_entity)
-                if source_id and target_id:
-                    await neo4j_service.merge_relationship(
-                        source_canonical_id=source_id,
-                        target_canonical_id=target_id,
-                        rel_type=rel.type,
-                        attributes=rel.attributes,
-                        evidence=rel.evidence,
-                    )
-                    rel_count += 1
-                else:
-                    logger.debug(
-                        "[%s] Skipping relationship %s->%s: entity not found in normalized set",
-                        job_id,
-                        rel.from_entity,
-                        rel.to_entity,
-                    )
+                # Step 9b: MERGE relationships into Neo4j
+                rel_count = 0
+                for rel in extraction_result.relationships:
+                    source_id = name_to_canonical.get(rel.from_entity)
+                    target_id = name_to_canonical.get(rel.to_entity)
+                    if source_id and target_id:
+                        await neo4j_service.merge_relationship(
+                            source_canonical_id=source_id,
+                            target_canonical_id=target_id,
+                            rel_type=rel.type,
+                            attributes=rel.attributes,
+                            evidence=rel.evidence,
+                        )
+                        rel_count += 1
+                    else:
+                        logger.debug(
+                            "[%s] Skipping relationship %s->%s: entity not found in normalized set",
+                            job_id,
+                            rel.from_entity,
+                            rel.to_entity,
+                        )
 
             job.entities_extracted = entity_count
             logger.info(
