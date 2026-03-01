@@ -6,6 +6,7 @@ import Cytoscape from "cytoscape";
 import { useAppStore } from "../stores/useAppStore";
 
 // Register layout extension once
+// eslint-disable-next-line react-hooks/rules-of-hooks
 Cytoscape.use(coseBilkent);
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -109,6 +110,7 @@ export default function GraphCanvas() {
           width: 3,
         },
       },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ] as any,
     []
   );
@@ -185,6 +187,7 @@ export default function GraphCanvas() {
         idealEdgeLength: 120,
         nodeRepulsion: 6000,
         gravity: 0.25,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any}
       cy={handleCyInit}
       className="w-full h-full"
