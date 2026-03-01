@@ -32,10 +32,34 @@ export default function ResizableSplitter() {
     [setSplitRatio]
   );
 
+  const onTouchStart = useCallback(
+    (_e: React.TouchEvent) => {
+      isDragging.current = true;
+
+      const onTouchMove = (moveEvent: TouchEvent) => {
+        if (!isDragging.current) return;
+        const touch = moveEvent.touches[0];
+        const ratio = touch.clientX / window.innerWidth;
+        setSplitRatio(ratio);
+      };
+
+      const onTouchEnd = () => {
+        isDragging.current = false;
+        document.removeEventListener("touchmove", onTouchMove);
+        document.removeEventListener("touchend", onTouchEnd);
+      };
+
+      document.addEventListener("touchmove", onTouchMove);
+      document.addEventListener("touchend", onTouchEnd);
+    },
+    [setSplitRatio]
+  );
+
   return (
     <div
       className="bg-gray-700 cursor-col-resize hover:bg-blue-500 active:bg-blue-400 transition-colors"
       onMouseDown={onMouseDown}
+      onTouchStart={onTouchStart}
       role="separator"
       aria-orientation="vertical"
     />
