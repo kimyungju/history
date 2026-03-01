@@ -66,15 +66,19 @@ class HybridRetrievalService:
         logger.info("Entity hints from question: %s", entity_hints)
 
         # Step 2 — Parallel: vector search + graph traversal.
-        with log_stage("query_search", logger=logger):
-            vector_task = vector_search_service.search(
-                query_embedding, filter_categories=filter_categories
-            )
-            graph_task = self._graph_search(entity_hints, filter_categories)
+        async def _timed_vector():
+            with log_stage("vector_search", logger=logger):
+                return await vector_search_service.search(
+                    query_embedding, filter_categories=filter_categories
+                )
 
-            vector_results, graph_result = await asyncio.gather(
-                vector_task, graph_task, return_exceptions=True
-            )
+        async def _timed_graph():
+            with log_stage("graph_search", logger=logger):
+                return await self._graph_search(entity_hints, filter_categories)
+
+        vector_results, graph_result = await asyncio.gather(
+            _timed_vector(), _timed_graph(), return_exceptions=True
+        )
 
         # Handle exceptions from parallel tasks
         if isinstance(vector_results, BaseException):
