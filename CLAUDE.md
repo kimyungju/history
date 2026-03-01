@@ -116,3 +116,8 @@ Copy `backend/.env.example` to `backend/.env` and fill in all `PLACEHOLDER_*` va
 - **Pauses after 3 days of inactivity** — auto-resumes on connection
 - **Node label**: `:Entity` with properties `canonical_id`, `name`, `main_categories`, `sub_category`, `aliases`, `attributes` (JSON string), `evidence_*` fields
 - **Relationship label**: `:RELATED_TO` with `rel_type` property storing the semantic type (e.g. "ADMINISTERED")
+
+
+## commit rule
+
+never include by claude or equivalent in the commit message
