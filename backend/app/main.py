@@ -1,15 +1,14 @@
 import logging
-
-import vertexai
 from contextlib import asynccontextmanager
 
+import vertexai
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config.logging_config import setup_logging
 from app.config.settings import settings
 from app.middleware.trace import TraceMiddleware
-from app.routers import ingest, query, graph
+from app.routers import graph, ingest, query
 from app.routers.admin import router as admin_router
 from app.services.neo4j_service import neo4j_service
 
@@ -59,5 +58,9 @@ app.include_router(admin_router)
 
 @app.get("/health")
 async def health():
-    neo4j_ok = await neo4j_service.verify_connectivity()
+    import asyncio
+    try:
+        neo4j_ok = await asyncio.wait_for(neo4j_service.verify_connectivity(), timeout=10)
+    except (asyncio.TimeoutError, Exception):
+        neo4j_ok = False
     return {"status": "ok", "neo4j": "connected" if neo4j_ok else "disconnected"}

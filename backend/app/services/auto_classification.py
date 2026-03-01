@@ -18,7 +18,9 @@ from app.models.schemas import MAIN_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
-CLASSIFICATION_PROMPT = """You are a document classifier for colonial-era British archives (primarily Straits Settlements CO 273 series).
+CLASSIFICATION_PROMPT = """\
+You are a document classifier for colonial-era British archives \
+(primarily Straits Settlements CO 273 series).
 
 Classify the following document excerpt into exactly ONE of these categories:
 1. Internal Relations and Research
@@ -28,11 +30,16 @@ Classify the following document excerpt into exactly ONE of these categories:
 5. General and Establishment
 
 Category descriptions:
-- "Internal Relations and Research": Diplomatic correspondence, inter-colonial relations, political affairs, surveys, and research reports.
-- "Economic and Financial": Trade, revenue, taxation, customs duties, commerce, budgets, and financial administration.
-- "Social Services": Education, health, welfare, immigration, labor, and public works.
-- "Defence and Military": Military operations, defence planning, police, security, and wartime matters.
-- "General and Establishment": Administrative appointments, regulations, civil service, constitutional matters, and anything not fitting the above.
+- "Internal Relations and Research": Diplomatic correspondence, \
+inter-colonial relations, political affairs, surveys, and research reports.
+- "Economic and Financial": Trade, revenue, taxation, customs duties, \
+commerce, budgets, and financial administration.
+- "Social Services": Education, health, welfare, immigration, labor, \
+and public works.
+- "Defence and Military": Military operations, defence planning, police, \
+security, and wartime matters.
+- "General and Establishment": Administrative appointments, regulations, \
+civil service, constitutional matters, and anything not fitting the above.
 
 Document excerpt:
 \"\"\"

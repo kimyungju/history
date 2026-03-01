@@ -1,6 +1,5 @@
 from pydantic import BaseModel
 
-
 MAIN_CATEGORIES = [
     "Internal Relations and Research",
     "Economic and Financial",
@@ -15,6 +14,10 @@ MAIN_CATEGORIES = [
 
 class IngestRequest(BaseModel):
     pdf_url: str  # "gs://bucket/document_042.pdf"
+
+
+class RetryEntitiesRequest(BaseModel):
+    doc_id: str  # e.g. "CO 273:550:1"
 
 
 class QueryRequest(BaseModel):
@@ -101,6 +104,12 @@ class QueryResponse(BaseModel):
     source_type: str  # "archive" | "web_fallback" | "mixed"
     citations: list[ArchiveCitation | WebCitation]
     graph: GraphPayload | None = None
+
+
+class RetryEntitiesResponse(BaseModel):
+    doc_id: str
+    entities_extracted: int
+    relationships_extracted: int
 
 
 class SignedUrlResponse(BaseModel):

@@ -23,7 +23,9 @@ from app.models.schemas import (
 
 logger = logging.getLogger(__name__)
 
-ENTITY_EXTRACTION_PROMPT = """You are an expert historian specializing in colonial-era archives. Extract all named entities and relationships from the following document text.
+ENTITY_EXTRACTION_PROMPT = """\
+You are an expert historian specializing in colonial-era archives. \
+Extract all named entities and relationships from the following document text.
 
 Document ID: {doc_id}
 Chunk ID: {chunk_id}

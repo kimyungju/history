@@ -12,5 +12,3 @@ neo4j==5.27.0
 pypdf==6.7.4
 rapidfuzz==3.10.1
 tavily-python==0.5.0
-pytest==8.3.4
-pytest-asyncio==0.24.0

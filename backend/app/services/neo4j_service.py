@@ -22,21 +22,30 @@ class Neo4jService:
     """Async Neo4j driver wrapper with MERGE-only write operations."""
 
     def __init__(self) -> None:
-        self._driver = AsyncGraphDatabase.driver(
-            settings.NEO4J_URI,
-            auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),
-        )
-        logger.info("Neo4jService initialised (uri=%s)", settings.NEO4J_URI)
+        self._driver = None
+
+    @property
+    def driver(self):
+        if self._driver is None:
+            self._driver = AsyncGraphDatabase.driver(
+                settings.NEO4J_URI,
+                auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),
+            )
+            logger.info(
+                "Neo4jService initialised (uri=%s)", settings.NEO4J_URI
+            )
+        return self._driver
 
     async def close(self) -> None:
         """Close the driver connection pool."""
-        await self._driver.close()
-        logger.info("Neo4jService driver closed")
+        if self._driver is not None:
+            await self._driver.close()
+            logger.info("Neo4jService driver closed")
 
     async def verify_connectivity(self) -> bool:
         """Check that the driver can reach Neo4j."""
         try:
-            await self._driver.verify_connectivity()
+            await self.driver.verify_connectivity()
             return True
         except Exception:
             logger.warning("Neo4j connectivity check failed", exc_info=True)
@@ -94,7 +103,7 @@ class Neo4jService:
             "evidence_chunk_id": evidence.chunk_id,
             "evidence_confidence": evidence.confidence,
         }
-        async with self._driver.session() as session:
+        async with self.driver.session() as session:
             await session.run(query, params)
 
         logger.debug("Merged entity %s (%s)", canonical_id, name)
@@ -139,7 +148,7 @@ class Neo4jService:
             "evidence_chunk_id": evidence.chunk_id,
             "evidence_confidence": evidence.confidence,
         }
-        async with self._driver.session() as session:
+        async with self.driver.session() as session:
             await session.run(query, params)
 
         logger.debug(
@@ -177,7 +186,7 @@ class Neo4jService:
         """
         params = {"canonical_id": canonical_id}
 
-        async with self._driver.session() as session:
+        async with self.driver.session() as session:
             result = await session.run(query, params)
             record = await result.single()
 
@@ -221,7 +230,7 @@ class Neo4jService:
                rel.evidence_doc_id AS evidence_doc_id,
                id(rel) AS rel_id
         """
-        async with self._driver.session() as session:
+        async with self.driver.session() as session:
             result = await session.run(edge_query, params)
             records = [r async for r in result]
 
@@ -281,7 +290,7 @@ class Neo4jService:
         """
         params = {"search_term": search_term, "limit": limit}
 
-        async with self._driver.session() as session:
+        async with self.driver.session() as session:
             result = await session.run(cypher, params)
             records = [r async for r in result]
 
@@ -305,7 +314,7 @@ class Neo4jService:
                e.name AS name,
                coalesce(e.aliases, []) AS aliases
         """
-        async with self._driver.session() as session:
+        async with self.driver.session() as session:
             result = await session.run(cypher)
             records = [r async for r in result]
 
@@ -325,7 +334,7 @@ class Neo4jService:
         WHERE e.canonical_id STARTS WITH $prefix
         RETURN e.canonical_id AS canonical_id
         """
-        async with self._driver.session() as session:
+        async with self.driver.session() as session:
             result = await session.run(cypher, {"prefix": prefix})
             records = [r async for r in result]
 

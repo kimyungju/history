@@ -16,7 +16,15 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from app.config.logging_config import log_stage
 from app.config.settings import settings
-from app.models.schemas import IngestRequest, IngestResponse, OcrConfidenceWarning
+from app.models.schemas import (
+    Chunk,
+    IngestRequest,
+    IngestResponse,
+    OcrConfidenceWarning,
+    RetryEntitiesRequest,
+    RetryEntitiesResponse,
+)
+from app.services.auto_classification import auto_classification_service
 from app.services.chunking import chunking_service
 from app.services.embeddings import embeddings_service
 from app.services.entity_extraction import entity_extraction_service
@@ -24,7 +32,6 @@ from app.services.entity_normalization import normalization_service
 from app.services.neo4j_service import neo4j_service
 from app.services.ocr import ocr_service
 from app.services.storage import storage_service
-from app.services.auto_classification import auto_classification_service
 from app.services.vector_search import vector_search_service
 
 logger = logging.getLogger(__name__)
@@ -165,7 +172,8 @@ async def _run_ingestion(job_id: str, pdf_url: str, doc_id: str) -> None:
                     else:
                         categories = [category]
                         logger.warning(
-                            "[%s] Auto-classified as '%s' with LOW confidence %.2f (threshold=%.2f) — flagged for review",
+                            "[%s] Auto-classified as '%s' with LOW confidence "
+                            "%.2f (threshold=%.2f) — flagged for review",
                             job_id,
                             category,
                             confidence,
@@ -310,3 +318,97 @@ async def ingest_status(job_id: str) -> IngestResponse:
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
     return job
+
+
+@router.post("/retry_entities", response_model=RetryEntitiesResponse)
+async def retry_entities(request: RetryEntitiesRequest) -> RetryEntitiesResponse:
+    """Re-run entity extraction (steps 7-9) for a previously ingested document.
+
+    Use this when vector ingestion succeeded but graph integration failed.
+    Chunks must already exist in GCS at ``chunks/{doc_id}.json``.
+    """
+    doc_id = request.doc_id
+    logger.info("Entity retry requested for doc_id=%s", doc_id)
+
+    # Step 1: Download chunks from GCS
+    with log_stage("chunk_download", logger=logger, doc_id=doc_id):
+        loop = asyncio.get_event_loop()
+        try:
+            chunks_data = await loop.run_in_executor(
+                None, storage_service.download_json, f"chunks/{doc_id}.json"
+            )
+        except Exception as exc:
+            logger.error("Failed to download chunks for doc_id=%s: %s", doc_id, exc)
+            raise HTTPException(
+                status_code=404,
+                detail=f"Chunks not found for doc_id={doc_id}. Has this document been ingested?",
+            ) from exc
+
+    # Step 2: Deserialize into Chunk objects
+    chunks = [Chunk(**c) for c in chunks_data]
+    logger.info("Loaded %d chunks for doc_id=%s", len(chunks), doc_id)
+
+    # Step 3: Entity extraction
+    with log_stage("entity_extraction", logger=logger, doc_id=doc_id):
+        extraction_result = await entity_extraction_service.extract_from_chunks(chunks, doc_id)
+
+    # Step 4: Entity normalization
+    with log_stage("entity_normalization", logger=logger, doc_id=doc_id):
+        normalized = await normalization_service.normalize(
+            extraction_result.entities, neo4j_service
+        )
+
+    # Build name -> canonical_id mapping for relationship wiring
+    name_to_canonical: dict[str, str] = {}
+    for norm_entity in normalized:
+        name_to_canonical[norm_entity.extracted.name] = norm_entity.canonical_id
+
+    # Step 5: Neo4j MERGE — entities and relationships
+    with log_stage("neo4j_merge", logger=logger, doc_id=doc_id):
+        entity_count = 0
+        for norm_entity in normalized:
+            ent = norm_entity.extracted
+            aliases = [ent.name] if not norm_entity.is_new else []
+            await neo4j_service.merge_entity(
+                canonical_id=norm_entity.canonical_id,
+                name=ent.name if norm_entity.is_new else ent.name,
+                main_categories=ent.main_categories,
+                sub_category=ent.sub_category,
+                aliases=aliases,
+                attributes=ent.attributes,
+                evidence=ent.evidence,
+            )
+            entity_count += 1
+
+        rel_count = 0
+        for rel in extraction_result.relationships:
+            source_id = name_to_canonical.get(rel.from_entity)
+            target_id = name_to_canonical.get(rel.to_entity)
+            if source_id and target_id:
+                await neo4j_service.merge_relationship(
+                    source_canonical_id=source_id,
+                    target_canonical_id=target_id,
+                    rel_type=rel.type,
+                    attributes=rel.attributes,
+                    evidence=rel.evidence,
+                )
+                rel_count += 1
+            else:
+                logger.debug(
+                    "Skipping relationship %s->%s: entity not found in normalized set",
+                    rel.from_entity,
+                    rel.to_entity,
+                )
+
+    logger.info(
+        "Entity retry complete for doc_id=%s: %d entities, %d relationships",
+        doc_id,
+        entity_count,
+        rel_count,
+    )
+
+    return RetryEntitiesResponse(
+        doc_id=doc_id,
+        entities_extracted=entity_count,
+        relationships_extracted=rel_count,
+    )

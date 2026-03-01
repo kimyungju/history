@@ -1,5 +1,5 @@
-import re
 import logging
+import re
 
 from app.config.settings import settings
 from app.models.schemas import Chunk

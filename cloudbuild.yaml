@@ -45,7 +45,7 @@ steps:
     args:
       - "build"
       - "-t"
-      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${SHORT_SHA}"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${_TAG}"
       - "./backend"
 
   # ---- Build Frontend Docker Image ----
@@ -55,7 +55,7 @@ steps:
     args:
       - "build"
       - "-t"
-      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${SHORT_SHA}"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${_TAG}"
       - "./frontend"
 
   # ---- Push Backend Image ----
@@ -64,7 +64,7 @@ steps:
     waitFor: ["build-backend"]
     args:
       - "push"
-      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${SHORT_SHA}"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${_TAG}"
 
   # ---- Push Frontend Image ----
   - name: "gcr.io/cloud-builders/docker"
@@ -72,7 +72,7 @@ steps:
     waitFor: ["build-frontend"]
     args:
       - "push"
-      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${SHORT_SHA}"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${_TAG}"
 
   # ---- Deploy Backend to Cloud Run ----
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
@@ -83,16 +83,18 @@ steps:
       - "run"
       - "deploy"
       - "colonial-archives-backend"
-      - "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${SHORT_SHA}"
+      - "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${_TAG}"
       - "--region=${_REGION}"
       - "--platform=managed"
       - "--allow-unauthenticated"
       - "--port=8080"
-      - "--memory=1Gi"
-      - "--cpu=1"
+      - "--memory=2Gi"
+      - "--cpu=2"
       - "--min-instances=0"
       - "--max-instances=3"
-      - "--set-secrets=NEO4J_URI=neo4j-uri:latest,NEO4J_USER=neo4j-user:latest,NEO4J_PASSWORD=neo4j-password:latest"
+      - "--timeout=300"
+      - "--set-env-vars=GCP_PROJECT_ID=${PROJECT_ID},GCP_REGION=${_REGION},DOC_AI_PROCESSOR_ID=projects/58449340870/locations/asia-southeast1/processors/1a36b779b245dae0,CLOUD_STORAGE_BUCKET=aihistory-co273-nus,VECTOR_SEARCH_ENDPOINT=1005598664.asia-southeast1-58449340870.vdb.vertexai.goog,VECTOR_SEARCH_INDEX_ID=5700013413925650432,VECTOR_SEARCH_DEPLOYED_INDEX_ID=colonial-archives-deployed"
+      - "--set-secrets=NEO4J_URI=neo4j-uri:latest,NEO4J_USER=neo4j-user:latest,NEO4J_PASSWORD=neo4j-password:latest,TAVILY_API_KEY=tavily-api-key:latest"
 
   # ---- Deploy Frontend to Cloud Run ----
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
@@ -103,7 +105,7 @@ steps:
       - "run"
       - "deploy"
       - "colonial-archives-frontend"
-      - "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${SHORT_SHA}"
+      - "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${_TAG}"
       - "--region=${_REGION}"
       - "--platform=managed"
       - "--allow-unauthenticated"
@@ -121,10 +123,10 @@ steps:
     args:
       - "-c"
       - |
-        BACKEND_URL=$(gcloud run services describe colonial-archives-backend \
+        BACKEND_URL=$$(gcloud run services describe colonial-archives-backend \
           --region=${_REGION} --format='value(status.url)')
-        echo "Smoke testing $BACKEND_URL/health ..."
-        curl -sf "$BACKEND_URL/health" | python3 -c "
+        echo "Smoke testing $$BACKEND_URL/health ..."
+        curl -sf "$$BACKEND_URL/health" | python3 -c "
         import json, sys
         data = json.load(sys.stdin)
         assert data['status'] == 'ok', f'Health check failed: {data}'
@@ -134,10 +136,11 @@ steps:
 substitutions:
   _REGION: asia-southeast1
   _REPO: colonial-archives
+  _TAG: latest
 
 images:
-  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${SHORT_SHA}"
-  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${SHORT_SHA}"
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${_TAG}"
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${_TAG}"
 
 options:
   logging: CLOUD_LOGGING_ONLY

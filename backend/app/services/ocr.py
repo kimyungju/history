@@ -8,6 +8,7 @@ import logging
 import re
 from dataclasses import dataclass
 
+from google.api_core.exceptions import ResourceExhausted
 from google.cloud import documentai_v1 as documentai
 from pypdf import PdfReader, PdfWriter
 
@@ -73,21 +74,25 @@ class OcrService:
         For large PDFs (> 40 MB) we physically split the PDF into sub-PDFs
         of up to 15 pages each using pypdf before sending to Document AI.
         For smaller multi-page PDFs we use ``IndividualPageSelector``.
+
+        Adaptive concurrency: reduces parallelism for very large PDFs to
+        avoid memory pressure and API quota exhaustion.
         """
+        file_size_mb = len(pdf_bytes) / 1024 / 1024
         is_oversized = len(pdf_bytes) > DOCUMENT_AI_MAX_INLINE_BYTES
         total_pages = self._count_pages_pypdf(pdf_bytes)
 
-        if is_oversized:
-            logger.info(
-                "[%s] PDF is %.1f MB (> 40 MB limit) with %d pages — splitting into sub-PDFs",
-                doc_id,
-                len(pdf_bytes) / 1024 / 1024,
-                total_pages,
-            )
+        logger.info(
+            "[%s] OCR starting — %.1f MB, %d pages, oversized=%s",
+            doc_id,
+            file_size_mb,
+            total_pages,
+            is_oversized,
+        )
 
         if total_pages <= DOCUMENT_AI_MAX_PAGES_PER_REQUEST and not is_oversized:
             # Small document -- single request, no page selector needed.
-            result = await self._process_batch(pdf_bytes, doc_id, page_start=1)
+            result = await self._process_batch(pdf_bytes, doc_id, page_start=1, batch_label="1/1")
             pages = sorted(result["pages"], key=lambda p: p.page_number)
             return OcrResult(
                 doc_id=doc_id,
@@ -95,35 +100,75 @@ class OcrService:
                 raw_responses=result["raw_responses"],
             )
 
+        # Adaptive concurrency: reduce parallelism for XL documents to
+        # avoid memory pressure and Document AI quota exhaustion.
+        if total_pages > 200:
+            concurrency = 1
+        elif total_pages > 100:
+            concurrency = 2
+        else:
+            concurrency = 5
+
+        total_batches = (total_pages + DOCUMENT_AI_MAX_PAGES_PER_REQUEST - 1) // DOCUMENT_AI_MAX_PAGES_PER_REQUEST
+        logger.info(
+            "[%s] Large PDF — %d batches of ≤%d pages, concurrency=%d",
+            doc_id,
+            total_batches,
+            DOCUMENT_AI_MAX_PAGES_PER_REQUEST,
+            concurrency,
+        )
+
         # Large document -- split into batches of 15 pages.
         reader = PdfReader(io.BytesIO(pdf_bytes)) if is_oversized else None
-        semaphore = asyncio.Semaphore(5)
+        semaphore = asyncio.Semaphore(concurrency)
+        completed_count = 0
+        completed_lock = asyncio.Lock()
 
-        async def _limited(coro):
+        async def _limited(coro, batch_num: int):
+            nonlocal completed_count
             async with semaphore:
-                return await coro
+                result = await coro
+                async with completed_lock:
+                    completed_count += 1
+                    logger.info(
+                        "[%s] OCR batch %d/%d complete (%d/%d done)",
+                        doc_id,
+                        batch_num,
+                        total_batches,
+                        completed_count,
+                        total_batches,
+                    )
+                return result
 
         tasks: list[asyncio.Task] = []
+        batch_num = 0
         for batch_start in range(1, total_pages + 1, DOCUMENT_AI_MAX_PAGES_PER_REQUEST):
             batch_end = min(
                 batch_start + DOCUMENT_AI_MAX_PAGES_PER_REQUEST - 1,
                 total_pages,
             )
+            batch_num += 1
+            batch_label = f"{batch_num}/{total_batches}"
 
             if is_oversized:
                 # Split out just the needed pages into a smaller sub-PDF.
                 sub_pdf_bytes = self._extract_page_range(reader, batch_start, batch_end)
                 tasks.append(
                     _limited(
-                        self._process_batch(sub_pdf_bytes, doc_id, page_start=batch_start)
+                        self._process_batch(sub_pdf_bytes, doc_id, page_start=batch_start, batch_label=batch_label),
+                        batch_num,
                     )
                 )
             else:
                 tasks.append(
                     _limited(
-                        self._process_page_range(pdf_bytes, doc_id, batch_start, batch_end)
+                        self._process_page_range(pdf_bytes, doc_id, batch_start, batch_end, batch_label=batch_label),
+                        batch_num,
                     )
                 )
+
+        # Release the PdfReader now — sub-PDFs are already extracted.
+        reader = None
 
         batch_results: list[dict] = await asyncio.gather(*tasks)
 
@@ -134,6 +179,11 @@ class OcrService:
             all_raw.extend(br["raw_responses"])
 
         all_pages.sort(key=lambda p: p.page_number)
+        logger.info(
+            "[%s] OCR complete — %d pages extracted",
+            doc_id,
+            len(all_pages),
+        )
 
         return OcrResult(doc_id=doc_id, pages=all_pages, raw_responses=all_raw)
 
@@ -145,6 +195,8 @@ class OcrService:
         doc_id: str,
         page_start: int,
         page_end: int,
+        *,
+        batch_label: str = "",
     ) -> dict:
         """Process a specific page range using ``IndividualPageSelector``.
 
@@ -152,6 +204,8 @@ class OcrService:
         ----------
         page_start, page_end:
             1-indexed inclusive page bounds.
+        batch_label:
+            Human-readable label like "3/14" for logging.
         """
         individual_pages = list(range(page_start, page_end + 1))
 
@@ -172,10 +226,7 @@ class OcrService:
             process_options=process_options,
         )
 
-        loop = asyncio.get_event_loop()
-        response: documentai.ProcessResponse = await loop.run_in_executor(
-            None, self.client.process_document, request
-        )
+        response = await self._call_document_ai(request, doc_id, batch_label)
 
         document = response.document
         full_text = document.text
@@ -196,6 +247,8 @@ class OcrService:
             )
 
         raw_resp = documentai.ProcessResponse.to_dict(response)
+        # Release the heavy response object to free memory.
+        del response, document, full_text
 
         return {"pages": pages, "raw_responses": [raw_resp]}
 
@@ -204,12 +257,16 @@ class OcrService:
         pdf_bytes: bytes,
         doc_id: str,
         page_start: int,
+        *,
+        batch_label: str = "",
     ) -> dict:
         """Process a full PDF (<= 15 pages) in a single request.
 
         ``page_start`` is the 1-indexed offset of the first page within the
         larger document (used to compute absolute page numbers).  For
         standalone documents this is simply ``1``.
+
+        ``batch_label`` is a human-readable label like "3/14" for logging.
         """
         raw_document = documentai.RawDocument(
             content=pdf_bytes,
@@ -221,10 +278,7 @@ class OcrService:
             raw_document=raw_document,
         )
 
-        loop = asyncio.get_event_loop()
-        response: documentai.ProcessResponse = await loop.run_in_executor(
-            None, self.client.process_document, request
-        )
+        response = await self._call_document_ai(request, doc_id, batch_label)
 
         document = response.document
         full_text = document.text
@@ -243,8 +297,55 @@ class OcrService:
             )
 
         raw_resp = documentai.ProcessResponse.to_dict(response)
+        # Release the heavy response object to free memory.
+        del response, document, full_text
 
         return {"pages": pages, "raw_responses": [raw_resp]}
+
+    # -- Document AI call with retry ----------------------------------------
+
+    async def _call_document_ai(
+        self,
+        request: documentai.ProcessRequest,
+        doc_id: str,
+        batch_label: str,
+    ) -> documentai.ProcessResponse:
+        """Call Document AI with retry on 429 RESOURCE_EXHAUSTED.
+
+        Retries up to 3 times with exponential backoff (2s, 4s, 8s).
+        """
+        max_retries = 3
+        base_delay = 2.0
+
+        loop = asyncio.get_event_loop()
+        for attempt in range(max_retries + 1):
+            try:
+                response: documentai.ProcessResponse = await loop.run_in_executor(
+                    None, self.client.process_document, request
+                )
+                return response
+            except ResourceExhausted:
+                if attempt >= max_retries:
+                    logger.error(
+                        "[%s] batch %s — Document AI RESOURCE_EXHAUSTED after %d retries, giving up",
+                        doc_id,
+                        batch_label,
+                        max_retries,
+                    )
+                    raise
+                delay = base_delay * (2 ** attempt)
+                logger.warning(
+                    "[%s] batch %s — Document AI RESOURCE_EXHAUSTED (429), retrying in %.0fs (attempt %d/%d)",
+                    doc_id,
+                    batch_label,
+                    delay,
+                    attempt + 1,
+                    max_retries,
+                )
+                await asyncio.sleep(delay)
+
+        # Unreachable, but satisfies type checkers.
+        raise RuntimeError("Unexpected: exhausted retry loop without returning or raising")
 
     # -- helpers ------------------------------------------------------------
 

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 from pathlib import PurePosixPath
 
 from google.cloud import storage
 
 from app.config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 class StorageService:
@@ -52,6 +55,25 @@ class StorageService:
         blob = self._bucket.blob(blob_name)
         return blob.download_as_bytes(timeout=timeout)
 
+    def download_json(self, path: str, timeout: int = 300) -> dict | list:
+        """Download and parse a JSON object from *path* inside the bucket.
+
+        Parameters
+        ----------
+        path:
+            Object path inside the bucket (e.g. ``chunks/CO 273:550:1.json``).
+        timeout:
+            Download timeout in seconds.
+
+        Returns
+        -------
+        dict | list
+            The parsed JSON content.
+        """
+        blob = self._bucket.blob(path)
+        raw = blob.download_as_bytes(timeout=timeout)
+        return json.loads(raw)
+
     def upload_json(self, path: str, data: dict | list) -> str:
         """Serialize *data* as JSON and upload it to *path* inside the bucket.
 
@@ -78,8 +100,11 @@ class StorageService:
         self,
         gcs_url: str,
         expiry_minutes: int | None = None,
-    ) -> str:
+    ) -> str | None:
         """Return a v4 signed URL granting temporary read access to the object.
+
+        Returns ``None`` if signing fails (e.g. user ADC credentials that
+        cannot sign blobs).  Callers should fall back to the proxy endpoint.
 
         Parameters
         ----------
@@ -94,12 +119,27 @@ class StorageService:
 
         blob_name = self._parse_blob_name(gcs_url)
         blob = self._bucket.blob(blob_name)
-        url: str = blob.generate_signed_url(
-            version="v4",
-            expiration=datetime.timedelta(minutes=expiry_minutes),
-            method="GET",
-        )
-        return url
+        try:
+            url: str = blob.generate_signed_url(
+                version="v4",
+                expiration=datetime.timedelta(minutes=expiry_minutes),
+                method="GET",
+            )
+            return url
+        except Exception as exc:
+            logger.warning(
+                "Failed to generate signed URL for %s: %s. "
+                "Falling back to proxy endpoint.",
+                gcs_url,
+                exc,
+            )
+            return None
+
+    def blob_exists(self, gcs_url: str) -> bool:
+        """Check if a blob exists in the bucket."""
+        blob_name = self._parse_blob_name(gcs_url)
+        blob = self._bucket.blob(blob_name)
+        return blob.exists()
 
     @staticmethod
     def get_doc_id_from_url(gcs_url: str) -> str:
