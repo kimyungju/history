@@ -1,0 +1,143 @@
+# Cloud Build pipeline for Colonial Archives Graph-RAG
+# Triggers: push to main branch
+# Steps: lint -> test -> build -> push -> deploy -> smoke test
+
+steps:
+  # ---- Backend Lint ----
+  - name: "python:3.11-slim"
+    id: "backend-lint"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        pip install --quiet ruff
+        cd backend
+        ruff check app/
+
+  # ---- Backend Test ----
+  - name: "python:3.11-slim"
+    id: "backend-test"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        cd backend
+        pip install --quiet -r requirements-dev.txt
+        python -m pytest tests/ -v
+
+  # ---- Frontend Lint + Type Check + Test ----
+  - name: "node:20-slim"
+    id: "frontend-checks"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        cd frontend
+        npm ci --silent
+        npm run lint
+        npx tsc --noEmit
+        npm run test
+
+  # ---- Build Backend Docker Image ----
+  - name: "gcr.io/cloud-builders/docker"
+    id: "build-backend"
+    waitFor: ["backend-lint", "backend-test"]
+    args:
+      - "build"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${SHORT_SHA}"
+      - "./backend"
+
+  # ---- Build Frontend Docker Image ----
+  - name: "gcr.io/cloud-builders/docker"
+    id: "build-frontend"
+    waitFor: ["frontend-checks"]
+    args:
+      - "build"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${SHORT_SHA}"
+      - "./frontend"
+
+  # ---- Push Backend Image ----
+  - name: "gcr.io/cloud-builders/docker"
+    id: "push-backend"
+    waitFor: ["build-backend"]
+    args:
+      - "push"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${SHORT_SHA}"
+
+  # ---- Push Frontend Image ----
+  - name: "gcr.io/cloud-builders/docker"
+    id: "push-frontend"
+    waitFor: ["build-frontend"]
+    args:
+      - "push"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${SHORT_SHA}"
+
+  # ---- Deploy Backend to Cloud Run ----
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "deploy-backend"
+    waitFor: ["push-backend"]
+    entrypoint: "gcloud"
+    args:
+      - "run"
+      - "deploy"
+      - "colonial-archives-backend"
+      - "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${SHORT_SHA}"
+      - "--region=${_REGION}"
+      - "--platform=managed"
+      - "--allow-unauthenticated"
+      - "--port=8080"
+      - "--memory=1Gi"
+      - "--cpu=1"
+      - "--min-instances=0"
+      - "--max-instances=3"
+      - "--set-secrets=NEO4J_URI=neo4j-uri:latest,NEO4J_USER=neo4j-user:latest,NEO4J_PASSWORD=neo4j-password:latest"
+
+  # ---- Deploy Frontend to Cloud Run ----
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "deploy-frontend"
+    waitFor: ["push-frontend", "deploy-backend"]
+    entrypoint: "gcloud"
+    args:
+      - "run"
+      - "deploy"
+      - "colonial-archives-frontend"
+      - "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${SHORT_SHA}"
+      - "--region=${_REGION}"
+      - "--platform=managed"
+      - "--allow-unauthenticated"
+      - "--port=80"
+      - "--memory=256Mi"
+      - "--cpu=1"
+      - "--min-instances=0"
+      - "--max-instances=2"
+
+  # ---- Smoke Test ----
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "smoke-test"
+    waitFor: ["deploy-backend"]
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        BACKEND_URL=$(gcloud run services describe colonial-archives-backend \
+          --region=${_REGION} --format='value(status.url)')
+        echo "Smoke testing $BACKEND_URL/health ..."
+        curl -sf "$BACKEND_URL/health" | python3 -c "
+        import json, sys
+        data = json.load(sys.stdin)
+        assert data['status'] == 'ok', f'Health check failed: {data}'
+        print('Smoke test PASSED')
+        "
+
+substitutions:
+  _REGION: asia-southeast1
+  _REPO: colonial-archives
+
+images:
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${SHORT_SHA}"
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${SHORT_SHA}"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
